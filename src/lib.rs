@@ -10,14 +10,19 @@ use std::{
     collections::HashMap,
     fs,
     io::{Read, Seek},
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
 
-pub fn read<'t, 'r: 't, R: Read + 'r, F, T>(reader: &'r mut R, f: F) -> T
+pub fn read<'t, 'r: 't, P: AsRef<Path>, R: Read + 'r, F, T>(
+    out_path: P,
+    reader: &'r mut R,
+    f: F,
+) -> T
 where
     F: Fn(&mut TraceReader<&'r mut R>) -> T,
 {
-    CounterSubscriber::read(reader, f)
+    CounterSubscriber::read(out_path.as_ref().to_owned(), reader, f)
 }
 
 pub struct TraceReader<R: Read> {
@@ -68,13 +73,25 @@ impl<S> ReadSpan<S> {
     }
 }
 
-#[derive(Default)]
 struct CounterSubscriberInner {
+    out_path: PathBuf,
     last_id: u64,
     root_span: Option<Id>,
     spans: HashMap<Id, ReadSpan<Id>>,
     metadata: HashMap<Id, &'static Metadata<'static>>,
     stack: Vec<Id>,
+}
+impl CounterSubscriberInner {
+    fn new(out_path: PathBuf) -> Self {
+        Self {
+            out_path,
+            last_id: Default::default(),
+            root_span: Default::default(),
+            spans: Default::default(),
+            metadata: Default::default(),
+            stack: Default::default(),
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -102,20 +119,25 @@ impl Drop for CounterSubscriberInner {
     fn drop(&mut self) {
         let tree = TreeSpan::into_tree(self.root_span.as_ref().cloned().unwrap(), &mut self.spans);
         let json = serde_json::to_string(&tree).unwrap();
-        fs::write("trace.json", json).unwrap();
+        fs::write(&self.out_path, json).unwrap();
     }
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 struct CounterSubscriber {
     inner: Arc<Mutex<CounterSubscriberInner>>,
 }
 impl CounterSubscriber {
-    pub fn read<'t, 'r: 't, R: Read + 'r, F, T>(reader: &'r mut R, f: F) -> T
+    fn new(out_path: PathBuf) -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(CounterSubscriberInner::new(out_path))),
+        }
+    }
+    pub fn read<'t, 'r: 't, R: Read + 'r, F, T>(out_path: PathBuf, reader: &'r mut R, f: F) -> T
     where
         F: Fn(&mut TraceReader<&'r mut R>) -> T,
     {
-        let sub = Self::default();
+        let sub = Self::new(out_path);
         let mut reader = TraceReader::new(reader, sub.clone());
         tracing::subscriber::with_default(sub, || f(&mut reader))
     }
@@ -228,7 +250,7 @@ mod test {
     fn test_trace() -> Result<(), Error> {
         let mut reader = std::io::Cursor::new(vec![1, 2, 3, 4, 5, 6]);
 
-        CounterSubscriber::read(&mut reader, read_stuff)?;
+        read("trace.json", &mut reader, read_stuff)?;
 
         Ok(())
     }
