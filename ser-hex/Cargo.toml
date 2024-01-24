@@ -1,0 +1,18 @@
+[package]
+name = "ser-hex"
+repository.workspace = true
+authors.workspace = true
+license.workspace = true
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+tracing = "0.1.37"
+tracing-subscriber = "0.3.17"
+tracing-core = { version = "0.1.31", default-features = false }
+anyhow.workspace = true
+serde_json.workspace = true
+serde = { version = "1.0.195", features = ["derive"] }
+
+[dev-dependencies]
+byteorder = "1.5.0"

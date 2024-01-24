@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tracing::{
     span,
     subscriber::{self, Subscriber},
@@ -52,22 +52,22 @@ impl<R: Read> Read for TraceReader<R> {
     }
 }
 
-#[derive(Debug, Serialize)]
-enum Action<S> {
+#[derive(Debug, Serialize, Deserialize)]
+pub enum Action<S> {
     Read(usize),
     Seek(usize),
     Span(S),
 }
 
-#[derive(Debug, Serialize)]
-struct ReadSpan<S> {
-    name: &'static str,
-    actions: Vec<Action<S>>,
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ReadSpan<S> {
+    pub name: std::borrow::Cow<'static, str>,
+    pub actions: Vec<Action<S>>,
 }
 impl<S> ReadSpan<S> {
     fn new(name: &'static str) -> Self {
         Self {
-            name,
+            name: name.into(),
             actions: vec![],
         }
     }
@@ -94,9 +94,9 @@ impl CounterSubscriberInner {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[repr(transparent)]
-struct TreeSpan(ReadSpan<TreeSpan>);
+pub struct TreeSpan(pub ReadSpan<TreeSpan>);
 impl TreeSpan {
     fn into_tree(id: Id, spans: &mut HashMap<Id, ReadSpan<Id>>) -> Self {
         let read_span = spans.remove(&id).unwrap();
