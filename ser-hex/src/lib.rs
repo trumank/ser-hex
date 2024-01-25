@@ -124,7 +124,7 @@ impl Drop for CounterSubscriberInner {
 }
 
 #[derive(Clone)]
-struct CounterSubscriber {
+pub struct CounterSubscriber {
     inner: Arc<Mutex<CounterSubscriberInner>>,
 }
 impl CounterSubscriber {
