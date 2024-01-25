@@ -133,11 +133,12 @@ impl CounterSubscriber {
             inner: Arc::new(Mutex::new(CounterSubscriberInner::new(out_path))),
         }
     }
-    pub fn read<'t, 'r: 't, R: Read + 'r, F, T>(out_path: PathBuf, reader: &'r mut R, f: F) -> T
+    pub fn read<'t, 'r: 't, R: Read + 'r, P, F, T>(out_path: P, reader: &'r mut R, f: F) -> T
     where
         F: Fn(&mut TraceReader<&'r mut R>) -> T,
+        P: Into<PathBuf>,
     {
-        let sub = Self::new(out_path);
+        let sub = Self::new(out_path.into());
         let mut reader = TraceReader::new(reader, sub.clone());
         tracing::subscriber::with_default(sub, || f(&mut reader))
     }
