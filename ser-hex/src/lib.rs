@@ -135,12 +135,17 @@ impl CounterSubscriber {
     }
     pub fn read<'t, 'r: 't, R: Read + 'r, P, F, T>(out_path: P, reader: &'r mut R, f: F) -> T
     where
-        F: Fn(&mut TraceReader<&'r mut R>) -> T,
+        F: FnMut(&mut TraceReader<&'r mut R>) -> T,
         P: Into<PathBuf>,
     {
+        #[tracing::instrument(name = "root", skip_all)]
+        fn root<F: FnMut(T) -> R, T, R>(mut f: F, t: T) -> R {
+            f(t)
+        }
+
         let sub = Self::new(out_path.into());
         let mut reader = TraceReader::new(reader, sub.clone());
-        tracing::subscriber::with_default(sub, || f(&mut reader))
+        tracing::subscriber::with_default(sub, || root(f, &mut reader))
     }
     fn read_action(&self, size: usize) {
         let mut lock = self.inner.lock().unwrap();
