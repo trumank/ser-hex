@@ -1,7 +1,7 @@
 use std::{
     collections::hash_map::DefaultHasher,
     ops::{Range, RangeBounds},
-    path::Path,
+    path::{Path, PathBuf},
 };
 
 use anyhow::{bail, Context as _, Result};
@@ -11,6 +11,8 @@ use fs_err as fs;
 
 use egui_memory_editor::{MemoryEditor, RenderCtx, SpanQuery};
 use intervaltree::IntervalTree;
+use notify::INotifyWatcher;
+use notify_debouncer_mini::{DebouncedEvent, DebouncedEventKind, Debouncer};
 use ser_hex::{Action, ReadSpan};
 
 pub fn main() -> Result<()> {
@@ -21,9 +23,9 @@ pub fn main() -> Result<()> {
     let data = Data {
         data: fs::read(data).context("Failed to load data")?,
     };
-    let trace = Trace::load(&data, trace).context("Failed to load trace")?;
+    let trace = FileTrace::new(&data, trace).context("Failed to load trace")?;
 
-    let app = App::new(data, vec![trace]);
+    let app = App::new(data, vec![trace])?;
     let _ = eframe::run_native(
         "Ser-Hex viewer",
         NativeOptions::default(),
@@ -242,23 +244,84 @@ impl Trace {
     }
 }
 
+struct FileTrace {
+    path: PathBuf,
+    trace: Trace,
+}
+impl FileTrace {
+    fn new<P: AsRef<Path>>(data: &Data, path: P) -> Result<Self> {
+        Ok(Self {
+            trace: Trace::load(data, &path)?,
+            path: fs::canonicalize(path)?,
+        })
+    }
+    fn reload(&mut self, data: &Data) -> Result<()> {
+        self.trace = Trace::load(data, &self.path)?;
+        Ok(())
+    }
+}
+
 pub struct App {
     data: Data,
-    traces: Vec<Trace>,
+    traces: Vec<FileTrace>,
     path_select: Option<Vec<usize>>,
+    watcher: Option<Debouncer<INotifyWatcher>>,
+    rx: Option<std::sync::mpsc::Receiver<PathBuf>>,
 }
 impl App {
-    fn new(data: Data, traces: Vec<Trace>) -> Self {
-        Self {
+    fn new(data: Data, traces: Vec<FileTrace>) -> Result<Self> {
+        Ok(Self {
             data,
             traces,
             path_select: None,
-        }
+            watcher: None,
+            rx: None,
+        })
     }
 }
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &Context, _frame: &mut Frame) {
+        if let Some(rx) = &self.rx {
+            for path in rx.try_iter() {
+                let trace = self.traces.iter_mut().find(|trace| trace.path == path);
+                println!("reloading {path:?}");
+                if let Err(err) = trace.expect("missing?").reload(&self.data) {
+                    eprintln!("failed to reload trace {err:?}")
+                }
+            }
+        } else {
+            let ctx = ctx.clone();
+            let (tx, rx) = std::sync::mpsc::channel();
+            self.rx = Some(rx);
+            let mut watcher = notify_debouncer_mini::new_debouncer(
+                std::time::Duration::from_millis(200),
+                move |res| match res {
+                    Ok(events) => {
+                        for event in events {
+                            if let DebouncedEvent {
+                                path,
+                                kind: DebouncedEventKind::Any,
+                            } = event
+                            {
+                                tx.send(path).unwrap()
+                            }
+                        }
+                        ctx.request_repaint();
+                    }
+                    Err(err) => eprintln!("error with watcher {err}"),
+                },
+            )
+            .unwrap();
+            for trace in &self.traces {
+                watcher
+                    .watcher()
+                    .watch(&trace.path, notify::RecursiveMode::NonRecursive)
+                    .unwrap();
+            }
+            self.watcher = Some(watcher);
+        }
+
         struct SpanQueryImpl<'tree> {
             tree: &'tree IntervalTree<usize, FlatSpan>,
         }
@@ -286,8 +349,8 @@ impl eframe::App for App {
         }
 
         for trace in &mut self.traces {
-            let interval_tree = &trace.interval_tree;
-            let full_tree = &trace.full_tree;
+            let interval_tree = &trace.trace.interval_tree;
+            let full_tree = &trace.trace.full_tree;
 
             let span_query = Box::new(SpanQueryImpl {
                 tree: interval_tree,
@@ -329,7 +392,7 @@ impl eframe::App for App {
             });
 
             egui::Window::new("trace" /*trace.mem_editor.window_name.clone()*/)
-                .open(&mut trace.is_open)
+                .open(&mut trace.trace.is_open)
                 .hscroll(false)
                 .vscroll(false)
                 .resizable(true)
@@ -339,9 +402,11 @@ impl eframe::App for App {
                     egui::SidePanel::left("left").show_inside(ui, |ui| {
                         ui.label("side panel");
                         egui::ScrollArea::vertical().show(ui, |ui| {
-                            tree_res = trace
-                                .full_tree
-                                .ui(ui, 0, self.path_select.take().as_deref())
+                            tree_res =
+                                trace
+                                    .trace
+                                    .full_tree
+                                    .ui(ui, 0, self.path_select.take().as_deref())
                         });
                     });
 
@@ -354,13 +419,18 @@ impl eframe::App for App {
                         match tree_res {
                             TreeResponse::None => {}
                             TreeResponse::Goto(address) => {
-                                trace.mem_editor.frame_data.set_highlight_address(address);
-                                trace.mem_editor.frame_data.goto_address_line =
-                                    Some(address / trace.mem_editor.options.column_count);
+                                trace
+                                    .trace
+                                    .mem_editor
+                                    .frame_data
+                                    .set_highlight_address(address);
+                                trace.trace.mem_editor.frame_data.goto_address_line =
+                                    Some(address / trace.trace.mem_editor.options.column_count);
                             }
                         }
-                        let prev_selection = trace.mem_editor.frame_data.selected_highlight_address;
-                        trace.mem_editor.draw_editor_contents_read_only(
+                        let prev_selection =
+                            trace.trace.mem_editor.frame_data.selected_highlight_address;
+                        trace.trace.mem_editor.draw_editor_contents_read_only(
                             ui,
                             &mut self.data,
                             |data, address| data.read_value(address).into(),
@@ -370,7 +440,8 @@ impl eframe::App for App {
                                 color_byte,
                             },
                         );
-                        let new_selection = trace.mem_editor.frame_data.selected_highlight_address;
+                        let new_selection =
+                            trace.trace.mem_editor.frame_data.selected_highlight_address;
                         if prev_selection != new_selection {
                             if let Some(selection) = new_selection {
                                 // TODO find "narrowest" span in case of multiple

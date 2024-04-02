@@ -12,5 +12,7 @@ eframe = "0.24.1"
 egui_memory_editor = { git = "https://github.com/trumank/egui_memory_editor" }
 fs-err = "2.11.0"
 intervaltree = "0.2.7"
+notify = "6.1.1"
+notify-debouncer-mini = "0.4.1"
 ser-hex = { path = "../ser-hex" }
 serde_json.workspace = true
