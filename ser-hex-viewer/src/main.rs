@@ -7,6 +7,7 @@ use std::{
 use anyhow::{bail, Context as _, Result};
 use eframe::{egui, epaint::Hsva, Frame, NativeOptions};
 use egui::Context;
+use fs_err as fs;
 
 use egui_memory_editor::{MemoryEditor, RenderCtx, SpanQuery};
 use intervaltree::IntervalTree;
@@ -18,9 +19,9 @@ pub fn main() -> Result<()> {
         bail!("usage: ser-hex-viewer <DATA PATH> <TRACE PATH>");
     };
     let data = Data {
-        data: std::fs::read(data).with_context(|| "Failed to data from path {data}")?,
+        data: fs::read(data).context("Failed to load data")?,
     };
-    let trace = Trace::load(&data, trace).with_context(|| "Failed to data: {trace}")?;
+    let trace = Trace::load(&data, trace).context("Failed to load trace")?;
 
     let app = App::new(data, vec![trace]);
     let _ = eframe::run_native(
@@ -218,7 +219,7 @@ pub struct Trace {
 }
 impl Trace {
     fn load<P: AsRef<Path>>(memory: &Data, path: P) -> Result<Self> {
-        let file = std::fs::File::open(&path)?;
+        let file = fs::File::open(path.as_ref())?;
         let reader = std::io::BufReader::new(file);
 
         let data: SparseTreeSpan = serde_json::from_reader(reader)?;
