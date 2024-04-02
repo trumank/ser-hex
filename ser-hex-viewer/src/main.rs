@@ -5,11 +5,7 @@ use std::{
 };
 
 use anyhow::{bail, Context as _, Result};
-use eframe::{
-    egui::{self, TextBuffer},
-    epaint::{tessellator::path, Hsva},
-    Frame, NativeOptions,
-};
+use eframe::{egui, epaint::Hsva, Frame, NativeOptions};
 use egui::Context;
 
 use egui_memory_editor::{MemoryEditor, RenderCtx, SpanQuery};
@@ -175,8 +171,7 @@ impl FullTreeSpan {
                         }
                     }
                 }
-            })
-            .header_response;
+            });
         res
     }
 }
@@ -310,7 +305,7 @@ impl eframe::App for App {
                                 ui.label(format!("{}, seek: {} => {}", depth + 1, from, to));
                             }
                             FullAction::Span(s) => {
-                                span = &s;
+                                span = s;
                                 ui.label(format!("{}, span: {}", depth + 1, s.name));
                             }
                         }
