@@ -1,0 +1,12 @@
+[package]
+name = "nbt"
+repository.workspace = true
+authors.workspace = true
+license.workspace = true
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+byteorder = "1.5.0"
+ser-hex = { version = "0.1.0", path = "../../ser-hex" }
+tracing = "0.1.40"
