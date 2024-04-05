@@ -11,7 +11,7 @@ use fs_err as fs;
 
 use egui_memory_editor::{MemoryEditor, RenderCtx, SpanQuery};
 use intervaltree::IntervalTree;
-use notify::INotifyWatcher;
+use notify::RecommendedWatcher;
 use notify_debouncer_mini::{DebouncedEvent, DebouncedEventKind, Debouncer};
 use ser_hex::{Action, ReadSpan};
 
@@ -265,7 +265,7 @@ pub struct App {
     data: Data,
     traces: Vec<FileTrace>,
     path_select: Option<Vec<usize>>,
-    watcher: Option<Debouncer<INotifyWatcher>>,
+    watcher: Option<Debouncer<RecommendedWatcher>>,
     rx: Option<std::sync::mpsc::Receiver<PathBuf>>,
 }
 impl App {
