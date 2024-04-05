@@ -72,7 +72,7 @@ fn read_tag<R: Read>(reader: &mut R, tag: u8) -> Result<Tag> {
 }
 
 #[instrument(skip_all)]
-fn read<R: Read>(reader: &mut R) -> Result<NamedTag> {
+pub fn read<R: Read>(reader: &mut R) -> Result<NamedTag> {
     let tag = reader.read_u8()?;
     let name = read_tag_string(reader)?;
     Ok(NamedTag {
