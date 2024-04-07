@@ -16,13 +16,33 @@ use std::{
 
 pub fn read<'t, 'r: 't, P: AsRef<Path>, R: Read + 'r, F, T>(
     out_path: P,
+    data: Vec<u8>,
     reader: &'r mut R,
     f: F,
 ) -> T
 where
     F: Fn(&mut TraceReader<&'r mut R>) -> T,
 {
-    CounterSubscriber::read(out_path.as_ref().to_owned(), reader, f)
+    CounterSubscriber::read(out_path.as_ref().to_owned(), data, reader, f)
+}
+
+pub fn read_from_stream<'t, 'r: 't, P: AsRef<Path>, R: Read + Seek + 'r, F, T>(
+    out_path: P,
+    reader: &'r mut R,
+    f: F,
+) -> T
+where
+    F: Fn(&mut TraceReader<&'r mut R>) -> T,
+{
+    let data = {
+        let mut buf = vec![];
+        let read = reader.read_to_end(&mut buf).unwrap();
+        reader
+            .seek(std::io::SeekFrom::Current(-(read as i64)))
+            .unwrap();
+        buf
+    };
+    read(out_path, data, reader, f)
 }
 
 pub struct TraceReader<R: Read> {
@@ -75,6 +95,7 @@ impl<S> ReadSpan<S> {
 
 struct CounterSubscriberInner {
     out_path: PathBuf,
+    data: Vec<u8>,
     last_id: u64,
     root_span: Option<Id>,
     spans: HashMap<Id, ReadSpan<Id>>,
@@ -82,9 +103,10 @@ struct CounterSubscriberInner {
     stack: Vec<Id>,
 }
 impl CounterSubscriberInner {
-    fn new(out_path: PathBuf) -> Self {
+    fn new(out_path: PathBuf, data: Vec<u8>) -> Self {
         Self {
             out_path,
+            data,
             last_id: Default::default(),
             root_span: Default::default(),
             spans: Default::default(),
@@ -92,6 +114,12 @@ impl CounterSubscriberInner {
             stack: Default::default(),
         }
     }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Trace {
+    pub data: Vec<u8>,
+    pub root: TreeSpan,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -118,7 +146,11 @@ impl TreeSpan {
 impl Drop for CounterSubscriberInner {
     fn drop(&mut self) {
         let tree = TreeSpan::into_tree(self.root_span.as_ref().cloned().unwrap(), &mut self.spans);
-        let json = serde_json::to_string(&tree).unwrap();
+        let trace = Trace {
+            data: std::mem::take(&mut self.data),
+            root: tree,
+        };
+        let json = serde_json::to_string(&trace).unwrap();
         fs::write(&self.out_path, json).unwrap();
     }
 }
@@ -128,12 +160,17 @@ pub struct CounterSubscriber {
     inner: Arc<Mutex<CounterSubscriberInner>>,
 }
 impl CounterSubscriber {
-    fn new(out_path: PathBuf) -> Self {
+    fn new(out_path: PathBuf, data: Vec<u8>) -> Self {
         Self {
-            inner: Arc::new(Mutex::new(CounterSubscriberInner::new(out_path))),
+            inner: Arc::new(Mutex::new(CounterSubscriberInner::new(out_path, data))),
         }
     }
-    pub fn read<'t, 'r: 't, R: Read + 'r, P, F, T>(out_path: P, reader: &'r mut R, f: F) -> T
+    pub fn read<'d, 't, 'r: 't, R: Read + 'r, P, F, T>(
+        out_path: P,
+        data: Vec<u8>,
+        reader: &'r mut R,
+        f: F,
+    ) -> T
     where
         F: FnMut(&mut TraceReader<&'r mut R>) -> T,
         P: Into<PathBuf>,
@@ -143,7 +180,7 @@ impl CounterSubscriber {
             f(t)
         }
 
-        let sub = Self::new(out_path.into());
+        let sub = Self::new(out_path.into(), data);
         let mut reader = TraceReader::new(reader, sub.clone());
         tracing::subscriber::with_default(sub, || root(f, &mut reader))
     }
@@ -256,7 +293,7 @@ mod test {
     fn test_trace() -> Result<(), Error> {
         let mut reader = std::io::Cursor::new(vec![1, 2, 3, 4, 5, 6]);
 
-        read("trace.json", &mut reader, read_stuff)?;
+        read_from_stream("trace.json", &mut reader, read_stuff)?;
 
         Ok(())
     }

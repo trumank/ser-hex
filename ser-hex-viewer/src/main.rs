@@ -17,15 +17,12 @@ use ser_hex::{Action, ReadSpan};
 
 pub fn main() -> Result<()> {
     let mut args = std::env::args().skip(1);
-    let (Some(data), Some(trace)) = (args.next(), args.next()) else {
-        bail!("usage: ser-hex-viewer <DATA PATH> <TRACE PATH>");
+    let Some(trace) = args.next() else {
+        bail!("usage: ser-hex-viewer <TRACE PATH>");
     };
-    let data = Data {
-        data: fs::read(data).context("Failed to load data")?,
-    };
-    let trace = FileTrace::new(&data, trace).context("Failed to load trace")?;
+    let trace = FileTrace::new(trace).context("Failed to load trace")?;
 
-    let app = App::new(data, vec![trace])?;
+    let app = App::new(vec![trace])?;
     let _ = eframe::run_native(
         "Ser-Hex viewer",
         NativeOptions::default(),
@@ -214,28 +211,31 @@ pub struct FullTreeSpan {
 }
 
 pub struct Trace {
+    data: Vec<u8>,
     full_tree: FullTreeSpan,
     interval_tree: IntervalTree<usize, FlatSpan>,
     mem_editor: MemoryEditor,
     is_open: bool,
 }
 impl Trace {
-    fn load<P: AsRef<Path>>(memory: &Data, path: P) -> Result<Self> {
+    fn load<P: AsRef<Path>>(path: P) -> Result<Self> {
         let file = fs::File::open(path.as_ref())?;
         let reader = std::io::BufReader::new(file);
 
-        let data: SparseTreeSpan = serde_json::from_reader(reader)?;
+        let trace: ser_hex::Trace = serde_json::from_reader(reader)?;
+        let root_span = trace.root.0;
 
-        let interval_tree = data.build_tree();
-        let full_tree = data.build_full_spans(&mut 0);
+        let interval_tree = root_span.build_tree();
+        let full_tree = root_span.build_full_spans(&mut 0);
 
         let mut mem_editor = MemoryEditor::new()
-            .with_address_range("All", 0..memory.data.len())
+            .with_address_range("All", 0..trace.data.len())
             .with_window_title(path.as_ref().to_string_lossy());
 
         mem_editor.options.column_count = 16;
 
         Ok(Trace {
+            data: trace.data,
             full_tree,
             interval_tree,
             mem_editor,
@@ -249,29 +249,27 @@ struct FileTrace {
     trace: Trace,
 }
 impl FileTrace {
-    fn new<P: AsRef<Path>>(data: &Data, path: P) -> Result<Self> {
+    fn new<P: AsRef<Path>>(path: P) -> Result<Self> {
         Ok(Self {
-            trace: Trace::load(data, &path)?,
+            trace: Trace::load(&path)?,
             path: fs::canonicalize(path)?,
         })
     }
-    fn reload(&mut self, data: &Data) -> Result<()> {
-        self.trace = Trace::load(data, &self.path)?;
+    fn reload(&mut self) -> Result<()> {
+        self.trace = Trace::load(&self.path)?;
         Ok(())
     }
 }
 
 pub struct App {
-    data: Data,
     traces: Vec<FileTrace>,
     path_select: Option<Vec<usize>>,
     watcher: Option<Debouncer<RecommendedWatcher>>,
     rx: Option<std::sync::mpsc::Receiver<PathBuf>>,
 }
 impl App {
-    fn new(data: Data, traces: Vec<FileTrace>) -> Result<Self> {
+    fn new(traces: Vec<FileTrace>) -> Result<Self> {
         Ok(Self {
-            data,
             traces,
             path_select: None,
             watcher: None,
@@ -286,7 +284,7 @@ impl eframe::App for App {
             for path in rx.try_iter() {
                 let trace = self.traces.iter_mut().find(|trace| trace.path == path);
                 println!("reloading {path:?}");
-                if let Err(err) = trace.expect("missing?").reload(&self.data) {
+                if let Err(err) = trace.expect("missing?").reload() {
                     eprintln!("failed to reload trace {err:?}")
                 }
             }
@@ -432,8 +430,8 @@ impl eframe::App for App {
                             trace.trace.mem_editor.frame_data.selected_highlight_address;
                         trace.trace.mem_editor.draw_editor_contents_read_only(
                             ui,
-                            &mut self.data,
-                            |data, address| data.read_value(address).into(),
+                            &mut trace.trace.data,
+                            |data, address| data[address].into(),
                             RenderCtx {
                                 span_query,
                                 hover_byte,
@@ -457,19 +455,5 @@ impl eframe::App for App {
                     });
                 });
         }
-    }
-}
-
-pub struct Data {
-    data: Vec<u8>,
-}
-
-impl Data {
-    pub fn read_value(&mut self, address: usize) -> u8 {
-        self.data[address]
-    }
-
-    pub fn write_value(&mut self, address: usize, val: u8) {
-        self.data[address] = val
     }
 }
