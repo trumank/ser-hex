@@ -156,7 +156,7 @@ impl Drop for CounterSubscriberInner {
 }
 
 #[derive(Clone)]
-pub struct CounterSubscriber {
+struct CounterSubscriber {
     inner: Arc<Mutex<CounterSubscriberInner>>,
 }
 impl CounterSubscriber {
@@ -165,7 +165,7 @@ impl CounterSubscriber {
             inner: Arc::new(Mutex::new(CounterSubscriberInner::new(out_path, data))),
         }
     }
-    pub fn read<'d, 't, 'r: 't, R: Read + 'r, P, F, T>(
+    fn read<'d, 't, 'r: 't, R: Read + 'r, P, F, T>(
         out_path: P,
         data: Vec<u8>,
         reader: &'r mut R,
