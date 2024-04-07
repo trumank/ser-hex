@@ -22,7 +22,7 @@ pub fn main() -> Result<()> {
     };
     let trace = FileTrace::new(trace).context("Failed to load trace")?;
 
-    let app = App::new(vec![trace])?;
+    let app = App::new(trace)?;
     let _ = eframe::run_native(
         "Ser-Hex viewer",
         NativeOptions::default(),
@@ -215,7 +215,6 @@ pub struct Trace {
     full_tree: FullTreeSpan,
     interval_tree: IntervalTree<usize, FlatSpan>,
     mem_editor: MemoryEditor,
-    is_open: bool,
 }
 impl Trace {
     fn load<P: AsRef<Path>>(path: P) -> Result<Self> {
@@ -239,7 +238,6 @@ impl Trace {
             full_tree,
             interval_tree,
             mem_editor,
-            is_open: true,
         })
     }
 }
@@ -262,15 +260,15 @@ impl FileTrace {
 }
 
 pub struct App {
-    traces: Vec<FileTrace>,
+    trace: FileTrace,
     path_select: Option<Vec<usize>>,
     watcher: Option<Debouncer<RecommendedWatcher>>,
     rx: Option<std::sync::mpsc::Receiver<PathBuf>>,
 }
 impl App {
-    fn new(traces: Vec<FileTrace>) -> Result<Self> {
+    fn new(trace: FileTrace) -> Result<Self> {
         Ok(Self {
-            traces,
+            trace,
             path_select: None,
             watcher: None,
             rx: None,
@@ -282,9 +280,8 @@ impl eframe::App for App {
     fn update(&mut self, ctx: &Context, _frame: &mut Frame) {
         if let Some(rx) = &self.rx {
             for path in rx.try_iter() {
-                let trace = self.traces.iter_mut().find(|trace| trace.path == path);
                 println!("reloading {path:?}");
-                if let Err(err) = trace.expect("missing?").reload() {
+                if let Err(err) = self.trace.reload() {
                     eprintln!("failed to reload trace {err:?}")
                 }
             }
@@ -311,12 +308,10 @@ impl eframe::App for App {
                 },
             )
             .unwrap();
-            for trace in &self.traces {
-                watcher
-                    .watcher()
-                    .watch(&trace.path, notify::RecursiveMode::NonRecursive)
-                    .unwrap();
-            }
+            watcher
+                .watcher()
+                .watch(&self.trace.path, notify::RecursiveMode::NonRecursive)
+                .unwrap();
             self.watcher = Some(watcher);
         }
 
@@ -346,114 +341,111 @@ impl eframe::App for App {
             }
         }
 
-        for trace in &mut self.traces {
-            let interval_tree = &trace.trace.interval_tree;
-            let full_tree = &trace.trace.full_tree;
+        let interval_tree = &self.trace.trace.interval_tree;
+        let full_tree = &self.trace.trace.full_tree;
 
-            let span_query = Box::new(SpanQueryImpl {
-                tree: interval_tree,
-            });
-            let hover_byte = Box::new(|ui: &mut egui::Ui, address| {
-                for range in interval_tree.query_point(address) {
-                    ui.label(format!("{address}: {}", range.value.name));
-                    let mut span = full_tree;
-                    ui.label(format!("{}, span: {}", 0, span.name));
-                    for (depth, span_index) in range.value.path.iter().enumerate() {
-                        match &span.actions[*span_index] {
-                            FullAction::Read(range) => {
-                                ui.label(format!("{}, read: {}", depth + 1, range.len()));
-                            }
-                            FullAction::Seek(from, to) => {
-                                ui.label(format!("{}, seek: {} => {}", depth + 1, from, to));
-                            }
-                            FullAction::Span(s) => {
-                                span = s;
-                                ui.label(format!("{}, span: {}", depth + 1, s.name));
-                            }
+        let span_query = Box::new(SpanQueryImpl {
+            tree: interval_tree,
+        });
+        let hover_byte = Box::new(|ui: &mut egui::Ui, address| {
+            for range in interval_tree.query_point(address) {
+                ui.label(format!("{address}: {}", range.value.name));
+                let mut span = full_tree;
+                ui.label(format!("{}, span: {}", 0, span.name));
+                for (depth, span_index) in range.value.path.iter().enumerate() {
+                    match &span.actions[*span_index] {
+                        FullAction::Read(range) => {
+                            ui.label(format!("{}, read: {}", depth + 1, range.len()));
+                        }
+                        FullAction::Seek(from, to) => {
+                            ui.label(format!("{}, seek: {} => {}", depth + 1, from, to));
+                        }
+                        FullAction::Span(s) => {
+                            span = s;
+                            ui.label(format!("{}, span: {}", depth + 1, s.name));
                         }
                     }
                 }
+            }
+        });
+        let color_byte = Box::new(|address| {
+            if let Some(first) = interval_tree.query_point(address).next() {
+                use std::hash::Hash;
+                use std::hash::Hasher;
+                let mut s = DefaultHasher::new();
+                first.value.name.hash(&mut s);
+
+                let hash = s.finish();
+
+                egui::Color32::from_rgb(hash as u8, (hash >> 8) as u8, (hash >> 16) as u8)
+            } else {
+                egui::Color32::BROWN
+            }
+        });
+
+        let mut tree_res = TreeResponse::None;
+        //self.shrink_window_ui(ui);
+        egui::SidePanel::left("left").show(ctx, |ui| {
+            ui.label("side panel");
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                tree_res = self
+                    .trace
+                    .trace
+                    .full_tree
+                    .ui(ui, 0, self.path_select.take().as_deref())
             });
-            let color_byte = Box::new(|address| {
-                if let Some(first) = interval_tree.query_point(address).next() {
-                    use std::hash::Hash;
-                    use std::hash::Hasher;
-                    let mut s = DefaultHasher::new();
-                    first.value.name.hash(&mut s);
+        });
 
-                    let hash = s.finish();
+        // https://github.com/emilk/egui/issues/901
+        egui::TopBottomPanel::bottom("bottom")
+            .show_separator_line(false)
+            .show(ctx, |_| ());
 
-                    egui::Color32::from_rgb(hash as u8, (hash >> 8) as u8, (hash >> 16) as u8)
-                } else {
-                    egui::Color32::BROWN
+        egui::CentralPanel::default().show(ctx, |ui| {
+            match tree_res {
+                TreeResponse::None => {}
+                TreeResponse::Goto(address) => {
+                    self.trace
+                        .trace
+                        .mem_editor
+                        .frame_data
+                        .set_highlight_address(address);
+                    self.trace.trace.mem_editor.frame_data.goto_address_line =
+                        Some(address / self.trace.trace.mem_editor.options.column_count);
                 }
-            });
-
-            egui::Window::new("trace" /*trace.mem_editor.window_name.clone()*/)
-                .open(&mut trace.trace.is_open)
-                .hscroll(false)
-                .vscroll(false)
-                .resizable(true)
-                .show(ctx, |ui| {
-                    let mut tree_res = TreeResponse::None;
-                    //self.shrink_window_ui(ui);
-                    egui::SidePanel::left("left").show_inside(ui, |ui| {
-                        ui.label("side panel");
-                        egui::ScrollArea::vertical().show(ui, |ui| {
-                            tree_res =
-                                trace
-                                    .trace
-                                    .full_tree
-                                    .ui(ui, 0, self.path_select.take().as_deref())
-                        });
-                    });
-
-                    // https://github.com/emilk/egui/issues/901
-                    egui::TopBottomPanel::bottom("bottom")
-                        .show_separator_line(false)
-                        .show_inside(ui, |_| ());
-
-                    egui::CentralPanel::default().show_inside(ui, |ui| {
-                        match tree_res {
-                            TreeResponse::None => {}
-                            TreeResponse::Goto(address) => {
-                                trace
-                                    .trace
-                                    .mem_editor
-                                    .frame_data
-                                    .set_highlight_address(address);
-                                trace.trace.mem_editor.frame_data.goto_address_line =
-                                    Some(address / trace.trace.mem_editor.options.column_count);
-                            }
-                        }
-                        let prev_selection =
-                            trace.trace.mem_editor.frame_data.selected_highlight_address;
-                        trace.trace.mem_editor.draw_editor_contents_read_only(
-                            ui,
-                            &mut trace.trace.data,
-                            |data, address| data[address].into(),
-                            RenderCtx {
-                                span_query,
-                                hover_byte,
-                                color_byte,
-                            },
-                        );
-                        let new_selection =
-                            trace.trace.mem_editor.frame_data.selected_highlight_address;
-                        if prev_selection != new_selection {
-                            if let Some(selection) = new_selection {
-                                // TODO find "narrowest" span in case of multiple
-                                if let Some(span) =
-                                    interval_tree.query(selection..selection + 1).next()
-                                {
-                                    let mut path_select = vec![0];
-                                    path_select.extend(&span.value.path);
-                                    self.path_select = Some(path_select);
-                                }
-                            }
-                        }
-                    });
-                });
-        }
+            }
+            let prev_selection = self
+                .trace
+                .trace
+                .mem_editor
+                .frame_data
+                .selected_highlight_address;
+            self.trace.trace.mem_editor.draw_editor_contents_read_only(
+                ui,
+                &mut self.trace.trace.data,
+                |data, address| data[address].into(),
+                RenderCtx {
+                    span_query,
+                    hover_byte,
+                    color_byte,
+                },
+            );
+            let new_selection = self
+                .trace
+                .trace
+                .mem_editor
+                .frame_data
+                .selected_highlight_address;
+            if prev_selection != new_selection {
+                if let Some(selection) = new_selection {
+                    // TODO find "narrowest" span in case of multiple
+                    if let Some(span) = interval_tree.query(selection..selection + 1).next() {
+                        let mut path_select = vec![0];
+                        path_select.extend(&span.value.path);
+                        self.path_select = Some(path_select);
+                    }
+                }
+            }
+        });
     }
 }
