@@ -389,7 +389,7 @@ impl eframe::App for App {
         //self.shrink_window_ui(ui);
         egui::SidePanel::left("left").show(ctx, |ui| {
             ui.label("side panel");
-            egui::ScrollArea::vertical().show(ui, |ui| {
+            egui::ScrollArea::both().show(ui, |ui| {
                 tree_res = self
                     .trace
                     .trace
