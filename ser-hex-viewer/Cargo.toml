@@ -8,7 +8,7 @@ edition.workspace = true
 
 [dependencies]
 anyhow.workspace = true
-eframe = "0.24.1"
+eframe = "0.27.2"
 egui_memory_editor = { git = "https://github.com/trumank/egui_memory_editor" }
 fs-err = "2.11.0"
 intervaltree = "0.2.7"
