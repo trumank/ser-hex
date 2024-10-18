@@ -1,0 +1,16 @@
+[package]
+name = "ser-hex-tui"
+repository.workspace = true
+authors.workspace = true
+license.workspace = true
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+dtoa = "1.0.9"
+itertools = "0.13.0"
+ratatui = "0.28"
+ser-hex = { version = "0.1.0", path = "../ser-hex" }
+serde.workspace = true
+serde_json.workspace = true
+tui-tree-widget = { git = "https://github.com/trumank/tui-rs-tree-widget.git", branch = "tree-data-trait" }

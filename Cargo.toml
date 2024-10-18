@@ -4,6 +4,7 @@ members = [
     "ser-hex",
     "ser-hex-tracer",
     "ser-hex-viewer",
+    "ser-hex-tui",
     "examples/*",
 ]
 
@@ -16,4 +17,5 @@ edition = "2021"
 
 [workspace.dependencies]
 anyhow = "1.0.90"
-serde_json = "1.0.130"
+serde = "1.0.210"
+serde_json = { version = "1.0.130", features = ["unbounded_depth"] }
