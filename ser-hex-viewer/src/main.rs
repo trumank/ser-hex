@@ -28,7 +28,7 @@ pub fn main() -> Result<()> {
     let _ = eframe::run_native(
         "Ser-Hex viewer",
         NativeOptions::default(),
-        Box::new(|_cc| Box::new(app)),
+        Box::new(|_cc| Ok(Box::new(app))),
     );
     Ok(())
 }
