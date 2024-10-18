@@ -320,7 +320,7 @@ impl eframe::App for App {
         struct SpanQueryImpl<'tree> {
             tree: &'tree IntervalTree<usize, FlatSpan>,
         }
-        impl<'tree> SpanQuery for SpanQueryImpl<'tree> {
+        impl SpanQuery for SpanQueryImpl<'_> {
             fn get_spans<'a>(
                 &'a self,
                 range: Range<egui_memory_editor::Address>,

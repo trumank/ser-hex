@@ -57,18 +57,14 @@ impl<R: Read> TraceReader<R> {
 }
 impl<R: Read + Seek> Seek for TraceReader<R> {
     fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
-        self.reader.seek(pos).map(|to| {
-            self.sub.seek_action(to);
-            to
-        })
+        self.reader
+            .seek(pos)
+            .inspect(|&to| self.sub.seek_action(to))
     }
 }
 impl<R: Read> Read for TraceReader<R> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        self.reader.read(buf).map(|s| {
-            self.sub.read_action(s);
-            s
-        })
+        self.reader.read(buf).inspect(|&s| self.sub.read_action(s))
     }
 }
 
@@ -124,17 +120,20 @@ pub struct Trace {
 }
 
 mod base64 {
+    use base64::prelude::*;
     use serde::{Deserialize, Serialize};
     use serde::{Deserializer, Serializer};
 
     pub fn serialize<S: Serializer>(v: &Vec<u8>, s: S) -> Result<S::Ok, S::Error> {
-        let base64 = base64::encode(v);
+        let base64 = BASE64_STANDARD.encode(v);
         String::serialize(&base64, s)
     }
 
     pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<u8>, D::Error> {
         let base64 = String::deserialize(d)?;
-        base64::decode(base64.as_bytes()).map_err(|e| serde::de::Error::custom(e))
+        BASE64_STANDARD
+            .decode(base64.as_bytes())
+            .map_err(serde::de::Error::custom)
     }
 }
 
