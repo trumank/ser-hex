@@ -7,7 +7,11 @@ use std::{
 };
 
 use anyhow::{bail, Context as _, Result};
-use eframe::{egui, epaint::Hsva, Frame, NativeOptions};
+use eframe::{
+    egui::{self},
+    epaint::Hsva,
+    Frame, NativeOptions,
+};
 use egui::Context;
 use fs_err as fs;
 
@@ -15,7 +19,7 @@ use egui_memory_editor::{MemoryEditor, RenderCtx, SpanQuery};
 use intervaltree::IntervalTree;
 use notify::RecommendedWatcher;
 use notify_debouncer_mini::{DebouncedEvent, DebouncedEventKind, Debouncer};
-use ser_hex::{Action, ReadSpan};
+use ser_hex::Action;
 
 pub fn main() -> Result<()> {
     let mut args = std::env::args().skip(1);
@@ -33,154 +37,174 @@ pub fn main() -> Result<()> {
     Ok(())
 }
 
-type SparseTreeSpan = ReadSpan<ser_hex::TreeSpan>;
+type SparseTreeAction = ser_hex::Action<ser_hex::TreeSpan>;
 
-trait SparseTreeSpanTrait {
+trait SparseTreeActionTrait {
     fn build_tree(&self) -> IntervalTree<usize, FlatSpan>;
-    fn collect_spans(&self, index: &mut usize, path: &mut Vec<usize>, spans: &mut Vec<FlatSpan>);
-    fn build_full_spans(&self, index: &mut usize) -> FullTreeSpan;
+    fn collect_spans(
+        &self,
+        index: &mut usize,
+        path: &mut Vec<usize>,
+        spans: &mut Vec<FlatSpan>,
+        name: &str,
+    );
+    fn build_full_actions(&self, index: &mut usize) -> FullAction;
 }
 
-impl SparseTreeSpanTrait for SparseTreeSpan {
+impl SparseTreeActionTrait for SparseTreeAction {
     fn build_tree(&self) -> IntervalTree<usize, FlatSpan> {
         let mut index = 0;
 
         let mut spans = vec![];
         let mut path = vec![];
-        self.collect_spans(&mut index, &mut path, &mut spans);
+        self.collect_spans(&mut index, &mut path, &mut spans, "root");
         IntervalTree::from_iter(spans.into_iter().map(|s| intervaltree::Element {
             range: s.range.clone(),
             value: s,
         }))
     }
-    fn collect_spans(&self, index: &mut usize, path: &mut Vec<usize>, spans: &mut Vec<FlatSpan>) {
-        path.push(0);
-        for (i, action) in self.actions.iter().enumerate() {
-            *path.last_mut().unwrap() = i;
-            match action {
-                Action::Read(size) => {
-                    spans.push(FlatSpan {
-                        range: *index..*index + size,
-                        name: self.name.to_string(),
-                        path: path.clone(),
-                    });
-                    *index += size;
+    fn collect_spans(
+        &self,
+        index: &mut usize,
+        path: &mut Vec<usize>,
+        spans: &mut Vec<FlatSpan>,
+        name: &str,
+    ) {
+        match self {
+            Action::Read(size) => {
+                spans.push(FlatSpan {
+                    range: *index..*index + size,
+                    name: name.to_string(),
+                    path: path.clone(),
+                });
+                *index += size;
+            }
+            Action::Seek(i) => {
+                /*
+                spans.push(TreeSpan {
+                    range: *index..*index + size,
+                    name: "read".into(),
+                });
+                */
+                *index = *i;
+            }
+            Action::Span(span) => {
+                path.push(0);
+                for (i, action) in span.0.actions.iter().enumerate() {
+                    *path.last_mut().unwrap() = i;
+                    action.collect_spans(index, path, spans, &span.0.name);
                 }
-                Action::Seek(i) => {
-                    /*
-                    spans.push(TreeSpan {
-                        range: *index..*index + size,
-                        name: "read".into(),
-                    });
-                    */
-                    *index = *i;
-                }
-                Action::Span(span) => {
-                    span.0.collect_spans(index, path, spans);
-                }
+                path.pop();
             }
         }
-        path.pop();
     }
-    fn build_full_spans(&self, index: &mut usize) -> FullTreeSpan {
-        FullTreeSpan {
-            name: self.name.to_string(),
-            actions: self
-                .actions
-                .iter()
-                .map(|action| match action {
-                    Action::Read(size) => {
-                        let start = *index;
-                        *index += size;
-                        FullAction::Read(start..*index)
-                    }
-                    Action::Seek(i) => {
-                        let start = *index;
-                        *index = *i;
-                        FullAction::Seek(start, *index)
-                    }
-                    Action::Span(span) => FullAction::Span(span.0.build_full_spans(index)),
-                })
-                .collect(),
+    fn build_full_actions(&self, index: &mut usize) -> FullAction {
+        match self {
+            Action::Read(size) => {
+                let start = *index;
+                *index += size;
+                FullAction::Read(start..*index)
+            }
+            Action::Seek(i) => {
+                let start = *index;
+                *index = *i;
+                FullAction::Seek(start, *index)
+            }
+            Action::Span(span) => FullAction::Span(FullTreeSpan {
+                name: span.0.name.to_string(),
+                actions: span
+                    .0
+                    .actions
+                    .iter()
+                    .map(|s| s.build_full_actions(index))
+                    .collect(),
+            }),
         }
     }
 }
-impl FullTreeSpan {
-    fn ui(&self, ui: &mut egui::Ui, index: usize, path_select: Option<&[usize]>) -> TreeResponse {
-        let mut res = TreeResponse::None;
-        egui::CollapsingHeader::new(self.name.as_str())
-            .open(path_select.map(|p| p.first() == Some(&index)))
-            .show(ui, |ui| {
-                let mut ui_action =
-                    |ui: &mut egui::Ui,
-                     index: usize,
-                     action: &FullAction,
-                     path_select: Option<&[usize]>| match action {
-                        FullAction::Read(range) => {
-                            let scroll_to_me = path_select
-                                .and_then(|p| {
-                                    p.split_first().and_then(|(first, rest)| {
-                                        (*first == index && rest.is_empty()).then_some(true)
-                                    })
-                                })
-                                .unwrap_or_default();
-                            let button_res = ui.button(format!("read {}", range.len()));
-                            if scroll_to_me {
-                                button_res.scroll_to_me(None);
-                            }
-                            if button_res.clicked() {
-                                res = TreeResponse::Goto(range.start);
-                            }
-                        }
-                        FullAction::Seek(from, to) => {
-                            ui.label(format!("seek {} => {}", from, to));
-                        }
-                        FullAction::Span(s) => {
-                            ui.push_id(index, |ui| {
-                                let r = s.ui(ui, index, path_select);
-                                if !matches!(r, TreeResponse::None) {
-                                    res = r
-                                };
-                            });
-                        }
-                    };
-                let n = 100;
-                let path_select = path_select.and_then(|p| {
-                    p.split_first()
-                        .and_then(|(first, rest)| (*first == index).then_some(rest))
-                });
-                for (i, chunk) in self.actions.chunks(n).enumerate() {
-                    let base_index = n * i;
-                    if self.actions.len() > n {
-                        egui::CollapsingHeader::new(format!(
-                            "{}-{}:",
-                            base_index,
-                            base_index + chunk.len()
-                        ))
-                        .open(path_select.map(|p| {
-                            p.first()
-                                .map(|p| (base_index..base_index + n).contains(p))
-                                .unwrap_or_default()
-                        }))
+impl FullAction {
+    fn ui(
+        &self,
+        ui: &mut egui::Ui,
+        index: usize,
+        path_select: Option<&[usize]>,
+    ) -> Option<TreeResponse> {
+        let mut res = None;
+
+        match self {
+            FullAction::Read(range) => {
+                let scroll_to_me = path_select
+                    .and_then(|p| {
+                        p.split_first().and_then(|(first, rest)| {
+                            (*first == index && rest.is_empty()).then_some(true)
+                        })
+                    })
+                    .unwrap_or_default();
+                let button_res = ui.button(format!("read {}", range.len()));
+                if scroll_to_me {
+                    button_res.scroll_to_me(None);
+                }
+                if button_res.clicked() {
+                    res = Some(TreeResponse::Goto(range.start));
+                }
+            }
+            FullAction::Seek(from, to) => {
+                ui.label(format!("seek {} => {}", from, to));
+            }
+            FullAction::Span(span) => {
+                ui.push_id(index, |ui| {
+                    egui::CollapsingHeader::new(span.name.as_str())
+                        .open(path_select.map(|p| p.first() == Some(&index)))
                         .show(ui, |ui| {
-                            for (ci, action) in chunk.iter().enumerate() {
-                                ui_action(ui, base_index + ci, action, path_select);
+                            let mut ui_action =
+                                |ui: &mut egui::Ui,
+                                 index: usize,
+                                 action: &FullAction,
+                                 path_select: Option<&[usize]>| {
+                                    if let Some(r) = action.ui(ui, index, path_select) {
+                                        res = Some(r);
+                                    }
+                                };
+                            let n = 100;
+                            let path_select = path_select.and_then(|p| {
+                                p.split_first()
+                                    .and_then(|(first, rest)| (*first == index).then_some(rest))
+                            });
+                            for (i, chunk) in span.actions.chunks(n).enumerate() {
+                                let base_index = n * i;
+                                if span.actions.len() > n {
+                                    egui::CollapsingHeader::new(format!(
+                                        "{}-{}:",
+                                        base_index,
+                                        base_index + chunk.len()
+                                    ))
+                                    .open(path_select.map(|p| {
+                                        p.first()
+                                            .map(|p| (base_index..base_index + n).contains(p))
+                                            .unwrap_or_default()
+                                    }))
+                                    .show(ui, |ui| {
+                                        for (ci, action) in chunk.iter().enumerate() {
+                                            ui_action(ui, base_index + ci, action, path_select);
+                                        }
+                                    });
+                                } else {
+                                    for (ci, action) in chunk.iter().enumerate() {
+                                        ui_action(ui, base_index + ci, action, path_select);
+                                    }
+                                }
                             }
                         });
-                    } else {
-                        for (ci, action) in chunk.iter().enumerate() {
-                            ui_action(ui, base_index + ci, action, path_select);
-                        }
-                    }
-                }
-            });
+                });
+            }
+        }
+
         res
     }
 }
 
 #[derive(Debug, Clone)]
 enum TreeResponse {
-    None,
     Goto(usize),
 }
 
@@ -214,7 +238,7 @@ pub struct FullTreeSpan {
 
 pub struct Trace {
     data: Vec<u8>,
-    full_tree: FullTreeSpan,
+    full_tree: FullAction,
     interval_tree: IntervalTree<usize, FlatSpan>,
     mem_editor: MemoryEditor,
 }
@@ -224,10 +248,10 @@ impl Trace {
         let reader = std::io::BufReader::new(file);
 
         let trace: ser_hex::Trace = serde_json::from_reader(reader)?;
-        let root_span = trace.root.0;
+        let root = trace.root;
 
-        let interval_tree = root_span.build_tree();
-        let full_tree = root_span.build_full_spans(&mut 0);
+        let interval_tree = root.build_tree();
+        let full_tree = root.build_full_actions(&mut 0);
 
         let mut mem_editor = MemoryEditor::new()
             .with_address_range("All", 0..trace.data.len())
@@ -353,9 +377,10 @@ impl eframe::App for App {
             for range in interval_tree.query_point(address) {
                 ui.label(format!("{address}: {}", range.value.name));
                 let mut span = full_tree;
-                ui.label(format!("{}, span: {}", 0, span.name));
+
+                //ui.label(format!("{}, span: {}", 0, span.name));
                 for (depth, span_index) in range.value.path.iter().enumerate() {
-                    match &span.actions[*span_index] {
+                    match span {
                         FullAction::Read(range) => {
                             ui.label(format!("{}, read: {}", depth + 1, range.len()));
                         }
@@ -363,7 +388,7 @@ impl eframe::App for App {
                             ui.label(format!("{}, seek: {} => {}", depth + 1, from, to));
                         }
                         FullAction::Span(s) => {
-                            span = s;
+                            span = &s.actions[*span_index];
                             ui.label(format!("{}, span: {}", depth + 1, s.name));
                         }
                     }
@@ -385,11 +410,10 @@ impl eframe::App for App {
             }
         });
 
-        let mut tree_res = TreeResponse::None;
+        let mut tree_res = None;
         //self.shrink_window_ui(ui);
         egui::SidePanel::left("left").show(ctx, |ui| {
-            ui.label("side panel");
-            egui::ScrollArea::both().show(ui, |ui| {
+            egui::ScrollArea::both().auto_shrink(false).show(ui, |ui| {
                 tree_res = self
                     .trace
                     .trace
@@ -405,8 +429,8 @@ impl eframe::App for App {
 
         egui::CentralPanel::default().show(ctx, |ui| {
             match tree_res {
-                TreeResponse::None => {}
-                TreeResponse::Goto(address) => {
+                None => {}
+                Some(TreeResponse::Goto(address)) => {
                     self.trace
                         .trace
                         .mem_editor

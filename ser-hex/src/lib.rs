@@ -116,7 +116,7 @@ impl CounterSubscriberInner {
 pub struct Trace {
     #[serde(with = "base64")]
     pub data: Vec<u8>,
-    pub root: TreeSpan,
+    pub root: Action<TreeSpan>,
 }
 
 mod base64 {
@@ -163,7 +163,7 @@ impl Drop for CounterSubscriberInner {
         let tree = TreeSpan::into_tree(self.root_span.as_ref().cloned().unwrap(), &mut self.spans);
         let trace = Trace {
             data: std::mem::take(&mut self.data),
-            root: tree,
+            root: Action::Span(tree),
         };
         let json = serde_json::to_string(&trace).unwrap();
         fs::write(&self.out_path, json).unwrap();
