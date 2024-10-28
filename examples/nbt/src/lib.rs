@@ -25,7 +25,7 @@ mod test {
             ser_hex_tracer::TracerOptions { skip_frames: 3 }, // depends on amount of inlining for build config
         );
         let res = read(&mut tracer);
-        tracer.get_trace().save("trace_tracer.json").unwrap();
+        tracer.trace().save("trace_tracer.json").unwrap();
         println!("{res:#?}");
         Ok(())
     }

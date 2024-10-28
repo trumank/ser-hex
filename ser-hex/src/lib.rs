@@ -113,12 +113,16 @@ impl CounterSubscriberInner {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct Trace {
-    #[serde(with = "base64")]
-    pub data: Vec<u8>,
+pub struct Trace<D: AsRef<[u8]> = Vec<u8>> {
+    #[serde(
+        serialize_with = "base64::serialize",
+        deserialize_with = "base64::deserialize",
+        bound(deserialize = "D: From<Vec<u8>>")
+    )]
+    pub data: D,
     pub root: Action<TreeSpan>,
 }
-impl Trace {
+impl<D: AsRef<[u8]>> Trace<D> {
     pub fn save(&self, path: impl AsRef<Path>) -> Result<(), std::io::Error> {
         let json = serde_json::to_string(&self).unwrap();
         fs::write(path, json)
@@ -130,16 +134,20 @@ mod base64 {
     use serde::{Deserialize, Serialize};
     use serde::{Deserializer, Serializer};
 
-    pub fn serialize<S: Serializer>(v: &Vec<u8>, s: S) -> Result<S::Ok, S::Error> {
-        let base64 = BASE64_STANDARD.encode(v);
+    pub fn serialize<V, S: Serializer>(v: V, s: S) -> Result<S::Ok, S::Error>
+    where
+        V: AsRef<[u8]>,
+    {
+        let base64 = BASE64_STANDARD.encode(v.as_ref());
         String::serialize(&base64, s)
     }
 
-    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<u8>, D::Error> {
+    pub fn deserialize<'de, V: From<Vec<u8>>, D: Deserializer<'de>>(d: D) -> Result<V, D::Error> {
         let base64 = String::deserialize(d)?;
         BASE64_STANDARD
             .decode(base64.as_bytes())
             .map_err(serde::de::Error::custom)
+            .map(|v| v.into())
     }
 }
 

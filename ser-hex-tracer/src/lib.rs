@@ -15,7 +15,7 @@ pub struct TracerOptions {
 
 #[derive(Default)]
 pub struct Tracer {
-    offset: usize,
+    data: Vec<u8>,
     ops: Vec<Op>,
     options: TracerOptions,
 }
@@ -36,8 +36,11 @@ impl<R: Read> TracerReader<R> {
             inner,
         }
     }
-    pub fn get_trace(&self) -> Trace {
-        self.tracer.get_trace()
+    pub fn tracer(&self) -> &Tracer {
+        &self.tracer
+    }
+    pub fn trace(&self) -> Trace<&[u8]> {
+        self.tracer.trace()
     }
 }
 impl<R: Read> Read for TracerReader<R> {
@@ -58,8 +61,10 @@ impl Tracer {
             ..Default::default()
         }
     }
+    pub fn data(&self) -> &[u8] {
+        &self.data
+    }
     pub fn read(&mut self, bytes: &[u8]) {
-        let offset = self.offset;
         let mut stack = vec![];
         let mut i = 0;
         backtrace::trace(|frame| {
@@ -71,23 +76,14 @@ impl Tracer {
         });
         stack.reverse();
 
-        let count = bytes.len();
-
         self.ops.push(Op {
-            data: bytes.to_vec(),
-            offset,
-            count,
+            count: bytes.len(),
             stack,
         });
 
-        self.offset += count;
+        self.data.extend(bytes);
     }
-    pub fn get_trace(&self) -> Trace {
-        let mut data = vec![];
-        for op in &self.ops {
-            assert_eq!(op.offset, data.len());
-            data.extend_from_slice(&op.data);
-        }
+    pub fn trace(&self) -> Trace<&[u8]> {
         #[derive(Debug)]
         enum TreeNode {
             Frame(Frame),
@@ -148,7 +144,7 @@ impl Tracer {
             root.insert(&op.stack, op.count);
         }
         Trace {
-            data,
+            data: &self.data,
             root: Action::Span(TreeSpan(ReadSpan {
                 name: "root".into(),
                 actions: vec![TreeNode::Frame(root).convert()],
@@ -158,8 +154,6 @@ impl Tracer {
 }
 
 struct Op {
-    data: Vec<u8>,
-    offset: usize,
     count: usize,
     stack: Vec<backtrace::Frame>,
 }
@@ -177,7 +171,7 @@ fn symbolize(ip: u64) -> Symbol {
                 addr = symbol.addr()
             });
             Symbol {
-                ptr: addr.map(|a| a as u64).unwrap_or(0),
+                //ptr: addr.map(|a| a as u64).unwrap_or(0),
                 //name: format!("0x{ip:X?} {addr:X?} {}", name.unwrap_or_default()),
                 name: name.unwrap_or_else(|| format!("0x{ip:X?}")),
             }
@@ -186,7 +180,7 @@ fn symbolize(ip: u64) -> Symbol {
 }
 #[derive(Debug, Clone)]
 pub struct Symbol {
-    ptr: u64,
+    //ptr: u64,
     name: String,
 }
 pub static SYMBOLS: LazyLock<Mutex<BTreeMap<u64, Symbol>>> =
