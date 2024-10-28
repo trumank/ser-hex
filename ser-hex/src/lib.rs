@@ -76,7 +76,7 @@ pub enum Action<S> {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ReadSpan<S> {
+pub struct ReadSpan<S = TreeSpan> {
     pub name: std::borrow::Cow<'static, str>,
     pub actions: Vec<Action<S>>,
 }
@@ -145,7 +145,7 @@ mod base64 {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[repr(transparent)]
-pub struct TreeSpan(pub ReadSpan<TreeSpan>);
+pub struct TreeSpan(pub ReadSpan);
 impl TreeSpan {
     fn into_tree(id: Id, spans: &mut HashMap<Id, ReadSpan<Id>>) -> Self {
         let read_span = spans.remove(&id).unwrap();

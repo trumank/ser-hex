@@ -96,7 +96,7 @@ impl Tracer {
         impl TreeNode {
             fn convert(self) -> Action<TreeSpan> {
                 match self {
-                    TreeNode::Frame(frame) => Action::Span(TreeSpan(ReadSpan::<TreeSpan> {
+                    TreeNode::Frame(frame) => Action::Span(TreeSpan(ReadSpan {
                         name: symbolize(frame.ip).name.into(),
                         actions: frame.children.into_iter().map(|c| c.convert()).collect(),
                     })),
