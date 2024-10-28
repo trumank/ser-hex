@@ -118,6 +118,12 @@ pub struct Trace {
     pub data: Vec<u8>,
     pub root: Action<TreeSpan>,
 }
+impl Trace {
+    pub fn save(&self, path: impl AsRef<Path>) -> Result<(), std::io::Error> {
+        let json = serde_json::to_string(&self).unwrap();
+        fs::write(path, json)
+    }
+}
 
 mod base64 {
     use base64::prelude::*;
@@ -161,12 +167,12 @@ impl TreeSpan {
 impl Drop for CounterSubscriberInner {
     fn drop(&mut self) {
         let tree = TreeSpan::into_tree(self.root_span.as_ref().cloned().unwrap(), &mut self.spans);
-        let trace = Trace {
+        Trace {
             data: std::mem::take(&mut self.data),
             root: Action::Span(tree),
-        };
-        let json = serde_json::to_string(&trace).unwrap();
-        fs::write(&self.out_path, json).unwrap();
+        }
+        .save(&self.out_path)
+        .unwrap()
     }
 }
 

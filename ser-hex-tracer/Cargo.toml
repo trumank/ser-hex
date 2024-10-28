@@ -1,0 +1,11 @@
+[package]
+name = "ser-hex-tracer"
+repository.workspace = true
+authors.workspace = true
+license.workspace = true
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+backtrace = { version = "0.3.74", features = ["cpp_demangle"] }
+ser-hex = { version = "0.1.0", path = "../ser-hex" }

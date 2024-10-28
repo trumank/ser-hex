@@ -10,9 +10,22 @@ mod test {
     use super::*;
 
     #[test]
-    fn test_nbt() -> Result<()> {
+    fn test_nbt_tracing() -> Result<()> {
         let mut input = std::io::Cursor::new(include_bytes!("../level.nbt"));
-        let res = ser_hex::read_from_stream("trace.json", &mut input, read)?;
+        let res = ser_hex::read_from_stream("trace_tracing.json", &mut input, read)?;
+        println!("{res:#?}");
+        Ok(())
+    }
+
+    #[test]
+    fn test_nbt_tracer() -> Result<()> {
+        let mut input = std::io::Cursor::new(include_bytes!("../level.nbt"));
+        let mut tracer = ser_hex_tracer::TracerReader::new_options(
+            &mut input,
+            ser_hex_tracer::TracerOptions { skip_frames: 3 }, // depends on amount of inlining for build config
+        );
+        let res = read(&mut tracer);
+        tracer.get_trace().save("trace_tracer.json").unwrap();
         println!("{res:#?}");
         Ok(())
     }
