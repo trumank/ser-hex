@@ -1,0 +1,28 @@
+[package]
+name = "trace_factorio"
+repository.workspace = true
+authors.workspace = true
+license.workspace = true
+version.workspace = true
+edition.workspace = true
+
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+[dependencies]
+retour = { git = "https://github.com/Hpmason/retour-rs", version = "0.4.0-alpha.2", features = ["static-detour"] }
+ser-hex-tracer = { version = "0.1.0", path = "../../ser-hex-tracer" }
+sha2 = "0.10.8"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2.161"
+memmap2 = "0.9.5"
+object = "0.36.5"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+pdb = "0.8.0"
+windows = { version = "0.58.0", features = [
+  "Win32_System_SystemServices",
+  "Win32_System_LibraryLoader",
+  "Win32_System_Threading",
+] }
