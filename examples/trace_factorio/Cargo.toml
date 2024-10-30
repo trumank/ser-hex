@@ -21,8 +21,5 @@ object = "0.36.5"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 pdb = "0.8.0"
-windows = { version = "0.58.0", features = [
-  "Win32_System_SystemServices",
-  "Win32_System_LibraryLoader",
-  "Win32_System_Threading",
-] }
+proxy_dll = { git = "https://github.com/trumank/proxy_dll.git" }
+windows = { version = "0.58.0", features = ["Win32_System_LibraryLoader"] }

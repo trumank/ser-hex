@@ -1,35 +1,18 @@
-use windows::{
-    Win32::Foundation::*,
-    Win32::System::{
-        LibraryLoader::GetModuleHandleA,
-        SystemServices::*,
-        Threading::{GetCurrentThread, QueueUserAPC},
-    },
-};
+use windows::Win32::System::LibraryLoader::GetModuleHandleA;
 
-#[no_mangle]
-#[allow(non_snake_case, unused_variables)]
-extern "system" fn DllMain(dll_module: HMODULE, call_reason: u32, _: *mut ()) -> bool {
-    match call_reason {
-        DLL_PROCESS_ATTACH => unsafe {
-            QueueUserAPC(Some(init), GetCurrentThread(), 0);
-        },
-        DLL_PROCESS_DETACH => (),
-        _ => (),
-    }
+proxy_dll::proxy_dll!(init);
 
-    true
-}
-
-unsafe extern "system" fn init(_: usize) {
+fn init() {
     let exe = std::env::current_exe().unwrap();
 
     let file = std::fs::File::open(exe.with_extension("pdb")).unwrap();
     let rva = find_sym(file).unwrap().unwrap();
 
-    let module = GetModuleHandleA(None)
-        .expect("could not find main module")
-        .0 as u64;
+    let module = unsafe {
+        GetModuleHandleA(None)
+            .expect("could not find main module")
+            .0 as u64
+    };
 
     crate::main(crate::Ctx {
         map_deserialiser: module + rva as u64,
