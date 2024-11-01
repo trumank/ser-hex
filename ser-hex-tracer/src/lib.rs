@@ -133,21 +133,54 @@ impl Tracer {
                 }
             }
         }
-        //if ops.is_empty() {
-        //    return None;
-        //}
-        let mut root = Frame::new(
-            self.ops[0].stack[0].symbol_address() as u64,
-            self.ops[0].stack[0].ip() as u64,
-        );
-        for op in &self.ops {
-            root.insert(&op.stack, op.count);
+
+        // find common frames at bottom of stack
+        let mut skip_start = 0;
+        if let Some(first) = self.ops.first() {
+            'find_start: while let Some(start) = first.stack.get(skip_start) {
+                let start_addr = start.symbol_address();
+                for op in &self.ops {
+                    let c = op.stack.get(skip_start);
+                    if c.is_none() || c.unwrap().symbol_address() != start_addr {
+                        break 'find_start;
+                    }
+                }
+                skip_start += 1;
+            }
         }
+
+        // find common frames at top of stack
+        let mut skip_end = 0;
+        if let Some(first) = self.ops.first() {
+            let s = &first.stack[skip_start..];
+            'find_end: while let Some(end) =
+                s.len().checked_sub(skip_end + 1).and_then(|i| s.get(i))
+            {
+                let start_addr = end.symbol_address();
+                for op in &self.ops {
+                    let s = &op.stack[skip_start..];
+                    let c = s.len().checked_sub(skip_end + 1).and_then(|i| s.get(i));
+                    if c.is_none() || c.unwrap().symbol_address() != start_addr {
+                        break 'find_end;
+                    }
+                }
+                skip_end += 1;
+            }
+        }
+
+        let root = self.ops.first().map(|root| {
+            let stack = &root.stack[skip_start..(root.stack.len() - skip_end)];
+            let mut root = Frame::new(stack[0].symbol_address() as u64, stack[0].ip() as u64);
+            for op in &self.ops {
+                root.insert(&op.stack[skip_start..(op.stack.len() - skip_end)], op.count);
+            }
+            TreeNode::Frame(root).convert()
+        });
         Trace {
             data: &self.data,
             root: Action::Span(TreeSpan(ReadSpan {
                 name: "root".into(),
-                actions: vec![TreeNode::Frame(root).convert()],
+                actions: root.into_iter().collect(),
             })),
         }
     }
