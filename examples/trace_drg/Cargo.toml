@@ -1,0 +1,18 @@
+[package]
+name = "trace_drg"
+repository.workspace = true
+authors.workspace = true
+license.workspace = true
+version.workspace = true
+edition.workspace = true
+
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+[dependencies]
+patternsleuth = { git = "https://github.com/trumank/patternsleuth.git", features = ["image-pe", "process-internal"] }
+retour = { git = "https://github.com/Hpmason/retour-rs", version = "0.4.0-alpha.2", features = ["static-detour"] }
+ser-hex-tracer = { version = "0.1.0", path = "../../ser-hex-tracer" }
+sha2 = "0.10.8"
+proxy_dll = { git = "https://github.com/trumank/proxy_dll.git" }
+windows = { version = "0.58.0", features = ["Win32_System_LibraryLoader"] }
