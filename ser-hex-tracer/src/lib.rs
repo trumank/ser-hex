@@ -93,7 +93,7 @@ impl Tracer {
             fn convert(self) -> Action<TreeSpan> {
                 match self {
                     TreeNode::Frame(frame) => Action::Span(TreeSpan(ReadSpan {
-                        name: symbolize(frame.ip).name.into(),
+                        name: symbolize(frame.ip, frame.id).name.into(),
                         actions: frame.children.into_iter().map(|c| c.convert()).collect(),
                     })),
                     TreeNode::Read { count } => Action::Read(count),
@@ -158,7 +158,7 @@ struct Op {
     stack: Vec<backtrace::Frame>,
 }
 
-fn symbolize(ip: u64) -> Symbol {
+fn symbolize(ip: u64, id: u64) -> Symbol {
     SYMBOLS
         .lock()
         .unwrap()
@@ -173,7 +173,7 @@ fn symbolize(ip: u64) -> Symbol {
             Symbol {
                 //ptr: addr.map(|a| a as u64).unwrap_or(0),
                 //name: format!("0x{ip:X?} {addr:X?} {}", name.unwrap_or_default()),
-                name: name.unwrap_or_else(|| format!("0x{ip:X?}")),
+                name: name.unwrap_or_else(|| format!("0x{id:X?}")),
             }
         })
         .clone()
