@@ -36,7 +36,7 @@ impl_resolver_singleton!(PEImage, Serialize, |ctx| async {
     ))
 });
 
-proxy_dll::proxy_dll!(main);
+proxy_dll::proxy_dll!([d3d11], main);
 
 retour::static_detour! {
     static LoadGameFromSlot: unsafe extern "system" fn(*const FString, u32) -> *const ();

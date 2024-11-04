@@ -1,6 +1,6 @@
 use windows::Win32::System::LibraryLoader::GetModuleHandleA;
 
-proxy_dll::proxy_dll!(init);
+proxy_dll::proxy_dll!([winmm], init);
 
 fn init() {
     let exe = std::env::current_exe().unwrap();

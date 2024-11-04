@@ -2710,8 +2710,9 @@ checksum = "43d84d1d7a6ac92673717f9f6d1518374ef257669c24ebc5ac25d5033828be58"
 [[package]]
 name = "proxy_dll"
 version = "0.1.0"
-source = "git+https://github.com/trumank/proxy_dll.git#bbbda4b50fd54fe9b39cc1b6103a9b7a90daaf7e"
+source = "git+https://github.com/trumank/proxy_dll.git#c7b672420f40672d56ca825a1e02da33e93339a2"
 dependencies = [
+ "msvc_def",
  "proxy_dll_proc",
  "windows-sys 0.59.0",
 ]
@@ -2719,7 +2720,7 @@ dependencies = [
 [[package]]
 name = "proxy_dll_proc"
 version = "0.1.0"
-source = "git+https://github.com/trumank/proxy_dll.git#bbbda4b50fd54fe9b39cc1b6103a9b7a90daaf7e"
+source = "git+https://github.com/trumank/proxy_dll.git#c7b672420f40672d56ca825a1e02da33e93339a2"
 dependencies = [
  "msvc_def",
  "proc-macro2",
