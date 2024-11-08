@@ -16,17 +16,16 @@ use std::{
 
 pub fn read<'t, 'r: 't, P: AsRef<Path>, R: Read + 'r, F, T>(
     out_path: P,
-    data: Vec<u8>,
     reader: &'r mut R,
     f: F,
 ) -> T
 where
     F: FnOnce(&mut TraceReader<&'r mut R>) -> T,
 {
-    CounterSubscriber::read(out_path.as_ref().to_owned(), data, reader, f)
+    CounterSubscriber::read(out_path.as_ref().to_owned(), reader, f)
 }
 
-pub fn read_from_stream<'t, 'r: 't, P: AsRef<Path>, R: Read + Seek + 'r, F, T>(
+pub fn read_from_stream<'t, 'r: 't, P: AsRef<Path>, R: Read + 'r, F, T>(
     out_path: P,
     reader: &'r mut R,
     f: F,
@@ -34,15 +33,7 @@ pub fn read_from_stream<'t, 'r: 't, P: AsRef<Path>, R: Read + Seek + 'r, F, T>(
 where
     F: FnOnce(&mut TraceReader<&'r mut R>) -> T,
 {
-    let data = {
-        let mut buf = vec![];
-        let read = reader.read_to_end(&mut buf).unwrap();
-        reader
-            .seek(std::io::SeekFrom::Current(-(read as i64)))
-            .unwrap();
-        buf
-    };
-    read(out_path, data, reader, f)
+    read(out_path, reader, f)
 }
 
 pub struct TraceReader<R: Read> {
@@ -64,7 +55,9 @@ impl<R: Read + Seek> Seek for TraceReader<R> {
 }
 impl<R: Read> Read for TraceReader<R> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        self.reader.read(buf).inspect(|&s| self.sub.read_action(s))
+        self.reader
+            .read(buf)
+            .inspect(|&s| self.sub.read_action(buf, s))
     }
 }
 
@@ -99,10 +92,10 @@ struct CounterSubscriberInner {
     stack: Vec<Id>,
 }
 impl CounterSubscriberInner {
-    fn new(out_path: PathBuf, data: Vec<u8>) -> Self {
+    fn new(out_path: PathBuf) -> Self {
         Self {
             out_path,
-            data,
+            data: Default::default(),
             last_id: Default::default(),
             root_span: Default::default(),
             spans: Default::default(),
@@ -189,17 +182,12 @@ struct CounterSubscriber {
     inner: Arc<Mutex<CounterSubscriberInner>>,
 }
 impl CounterSubscriber {
-    fn new(out_path: PathBuf, data: Vec<u8>) -> Self {
+    fn new(out_path: PathBuf) -> Self {
         Self {
-            inner: Arc::new(Mutex::new(CounterSubscriberInner::new(out_path, data))),
+            inner: Arc::new(Mutex::new(CounterSubscriberInner::new(out_path))),
         }
     }
-    fn read<'d, 't, 'r: 't, R: Read + 'r, P, F, T>(
-        out_path: P,
-        data: Vec<u8>,
-        reader: &'r mut R,
-        f: F,
-    ) -> T
+    fn read<'d, 't, 'r: 't, R: Read + 'r, P, F, T>(out_path: P, reader: &'r mut R, f: F) -> T
     where
         F: FnOnce(&mut TraceReader<&'r mut R>) -> T,
         P: Into<PathBuf>,
@@ -209,13 +197,14 @@ impl CounterSubscriber {
             f(t)
         }
 
-        let sub = Self::new(out_path.into(), data);
+        let sub = Self::new(out_path.into());
         let mut reader = TraceReader::new(reader, sub.clone());
         tracing::subscriber::with_default(sub, || root(f, &mut reader))
     }
-    fn read_action(&self, size: usize) {
+    fn read_action(&self, buf: &[u8], size: usize) {
         let mut lock = self.inner.lock().unwrap();
         let current = lock.stack.last().cloned().unwrap();
+        lock.data.extend(&buf[..size]);
         lock.spans
             .get_mut(&current)
             .unwrap()
