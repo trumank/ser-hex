@@ -21,7 +21,7 @@ pub fn read<'t, 'r: 't, P: AsRef<Path>, R: Read + 'r, F, T>(
     f: F,
 ) -> T
 where
-    F: Fn(&mut TraceReader<&'r mut R>) -> T,
+    F: FnOnce(&mut TraceReader<&'r mut R>) -> T,
 {
     CounterSubscriber::read(out_path.as_ref().to_owned(), data, reader, f)
 }
@@ -32,7 +32,7 @@ pub fn read_from_stream<'t, 'r: 't, P: AsRef<Path>, R: Read + Seek + 'r, F, T>(
     f: F,
 ) -> T
 where
-    F: Fn(&mut TraceReader<&'r mut R>) -> T,
+    F: FnOnce(&mut TraceReader<&'r mut R>) -> T,
 {
     let data = {
         let mut buf = vec![];
@@ -201,11 +201,11 @@ impl CounterSubscriber {
         f: F,
     ) -> T
     where
-        F: FnMut(&mut TraceReader<&'r mut R>) -> T,
+        F: FnOnce(&mut TraceReader<&'r mut R>) -> T,
         P: Into<PathBuf>,
     {
         #[tracing::instrument(name = "root", skip_all)]
-        fn root<F: FnMut(T) -> R, T, R>(mut f: F, t: T) -> R {
+        fn root<F: FnOnce(T) -> R, T, R>(f: F, t: T) -> R {
             f(t)
         }
 
