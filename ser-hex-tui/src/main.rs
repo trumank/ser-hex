@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, HashSet};
+use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use itertools::Itertools;
@@ -13,23 +14,67 @@ use tui_tree_widget::{Tree, TreeData, TreeState};
 
 #[must_use]
 struct App<'trace> {
-    state: TreeState<Vec<usize>>,
+    state: TreeState<Path>,
     tree_trait: TraceTree<'trace>,
 }
 
 struct TraceTree<'trace> {
     trace: &'trace ser_hex::Trace,
-    nodes: BTreeMap<Vec<usize>, TraceNode<'trace>>,
-    root: TraceNode<'trace>,
+    nodes: BTreeMap<Path, Rc<TraceNode<'trace>>>,
+    root: Rc<TraceNode<'trace>>,
 }
 
 #[derive(Debug, Clone)]
 struct TraceNode<'trace> {
-    identifier: Vec<usize>,
+    identifier: Path,
     start: usize,
     end: usize,
     action: &'trace ser_hex::Action<ser_hex::TreeSpan>,
-    children: Vec<TraceNode<'trace>>,
+    children: Vec<Rc<TraceNode<'trace>>>,
+}
+
+#[derive(Default, Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub struct Path<T: AsRef<[u8]> = Vec<u8>>(T);
+impl<T: AsRef<[u8]>> Path<T> {}
+impl Path {
+    pub fn new() -> Self {
+        Self::default()
+    }
+    pub fn push(&mut self, max: usize, n: usize) {
+        let num_bytes = if max == 0 {
+            1
+        } else {
+            (max.ilog2() / 8) as usize + 1
+        };
+        let b = n.to_be_bytes();
+        self.0.extend_from_slice(&b[b.len() - num_bytes..]);
+    }
+    pub fn pop(&mut self, max: usize) {
+        let num_bytes = if max == 0 {
+            1
+        } else {
+            (max.ilog2() / 8) as usize + 1
+        };
+        self.0.truncate(self.0.len() - num_bytes);
+    }
+    pub fn as_slice(&self) -> Path<&[u8]> {
+        Path(self.0.as_slice())
+    }
+}
+impl<'a> Path<&'a [u8]> {
+    pub fn split_next(&self, max: usize) -> (usize, Path<&'a [u8]>) {
+        let num_bytes = if max == 0 {
+            1
+        } else {
+            (max.ilog2() / 8) as usize + 1
+        };
+        let mut result = 0;
+        let arr = self.0;
+        for (i, &byte) in arr[..num_bytes].iter().rev().enumerate() {
+            result |= (byte as usize) << (i * 8);
+        }
+        (result, Path(&arr[num_bytes..]))
+    }
 }
 
 impl<'trace> TraceTree<'trace> {
@@ -37,32 +82,34 @@ impl<'trace> TraceTree<'trace> {
         fn convert<'trace>(
             offset: &mut usize,
             action: &'trace ser_hex::Action<ser_hex::TreeSpan>,
-            nodes: &mut BTreeMap<Vec<usize>, TraceNode<'trace>>,
-            path: &mut Vec<usize>,
-        ) -> TraceNode<'trace> {
+            nodes: &mut BTreeMap<Path, Rc<TraceNode<'trace>>>,
+            path: &mut Path,
+        ) -> Rc<TraceNode<'trace>> {
             let start = *offset;
             match action {
                 ser_hex::Action::Read(r) => {
                     *offset += r;
-                    let node = TraceNode {
+                    let node: Rc<_> = TraceNode {
                         identifier: path.clone(),
                         start,
                         end: *offset,
                         action,
                         children: vec![],
-                    };
+                    }
+                    .into();
                     nodes.insert(path.clone(), node.clone());
                     node
                 }
                 ser_hex::Action::Seek(s) => {
                     *offset = *s;
-                    let node = TraceNode {
+                    let node: Rc<_> = TraceNode {
                         identifier: path.clone(),
                         start: *offset,
                         end: *s,
                         action,
                         children: vec![],
-                    };
+                    }
+                    .into();
                     nodes.insert(path.clone(), node.clone());
                     node
                 }
@@ -70,36 +117,36 @@ impl<'trace> TraceTree<'trace> {
                     let mut children = vec![];
 
                     let start = *offset;
-                    path.push(0);
                     for (i, child) in s.0.actions.iter().enumerate() {
-                        *path.last_mut().unwrap() = i;
+                        path.push(s.0.actions.len(), i);
                         children.push(convert(offset, child, nodes, path));
+                        path.pop(s.0.actions.len());
                     }
-                    path.pop();
 
-                    let node = TraceNode {
+                    let node: Rc<_> = TraceNode {
                         identifier: path.clone(),
                         start,
                         end: *offset,
                         action,
                         children,
-                    };
+                    }
+                    .into();
                     nodes.insert(path.clone(), node.clone());
                     node
                 }
             }
         }
 
-        let mut nodes = BTreeMap::default();
+        let mut nodes = Default::default();
 
-        let root = convert(&mut 0, &trace.root, &mut nodes, &mut vec![]);
+        let root = convert(&mut 0, &trace.root, &mut nodes, &mut Path::new());
 
         Self { trace, nodes, root }
     }
 }
 
 impl TreeData for TraceTree<'_> {
-    type Identifier = Vec<usize>;
+    type Identifier = Path;
 
     fn get_nodes(
         &self,
@@ -107,24 +154,25 @@ impl TreeData for TraceTree<'_> {
     ) -> Vec<tui_tree_widget::Node<Self::Identifier>> {
         fn collect_visible(
             node: &TraceNode,
-            open: &HashSet<Vec<usize>>,
-            nodes: &mut Vec<tui_tree_widget::Node<Vec<usize>>>,
+            open: &HashSet<Path>,
+            nodes: &mut Vec<tui_tree_widget::Node<Path>>,
+            depth: usize,
         ) {
             nodes.push(tui_tree_widget::Node {
-                depth: node.identifier.len(),
+                depth,
                 has_children: !node.children.is_empty(),
                 height: 1,
                 identifier: node.identifier.clone(),
             });
             if open.contains(&node.identifier) {
                 for child in &node.children {
-                    collect_visible(child, open, nodes);
+                    collect_visible(child, open, nodes, depth + 1);
                 }
             }
         }
 
         let mut nodes = vec![];
-        collect_visible(&self.root, open_identifiers, &mut nodes);
+        collect_visible(&self.root, open_identifiers, &mut nodes, 0);
 
         nodes
     }
@@ -358,7 +406,7 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> std::io::Res
                     KeyCode::Right => app.state.key_right(),
                     KeyCode::Down => app.state.key_down(),
                     KeyCode::Up => app.state.key_up(),
-                    KeyCode::Esc => app.state.select(Some(Vec::new())),
+                    KeyCode::Esc => app.state.select(Some(Path::new())),
                     KeyCode::Home => app.state.select_first(),
                     KeyCode::End => app.state.select_last(),
                     KeyCode::PageDown => app.state.scroll_down(3),
@@ -409,6 +457,36 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> std::io::Res
             last_render_took = before.elapsed();
 
             debounce = None;
+        }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_path() {
+        let data = vec![
+            (12, 2),
+            (12, 0),
+            (300, 270),
+            (12345, 4),
+            (255, 255),
+            (256, 256),
+        ];
+        let mut path = Path::new();
+        for (max, n) in &data {
+            path.push(*max, *n);
+        }
+        dbg!(&path);
+
+        let mut path = path.as_slice();
+        let mut n;
+        for (max, a) in data {
+            (n, path) = path.split_next(max);
+            dbg!((max, n));
+            assert_eq!(a, n);
         }
     }
 }
