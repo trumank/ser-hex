@@ -8,13 +8,17 @@ use ratatui::crossterm::event::{Event, KeyCode, KeyModifiers, MouseEventKind};
 use ratatui::layout::{Constraint, Direction, Layout, Position, Rect};
 use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation, Widget};
+use ratatui::widgets::{
+    Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, StatefulWidget,
+    Widget,
+};
 use ratatui::{crossterm, Frame, Terminal};
 use tui_tree_widget::{Tree, TreeData, TreeState};
 
 #[must_use]
 struct App<'trace> {
-    state: TreeState<Path>,
+    tree_state: TreeState<Path>,
+    hex_state: HexState,
     tree_trait: TraceTree<'trace>,
 }
 
@@ -255,7 +259,8 @@ impl TreeData for TraceTree<'_> {
 impl<'trace> App<'trace> {
     fn new(trace: &'trace ser_hex::Trace) -> Self {
         Self {
-            state: TreeState::default(),
+            tree_state: TreeState::default(),
+            hex_state: HexState::default(),
             tree_trait: TraceTree::new(trace),
         }
     }
@@ -267,14 +272,9 @@ impl<'trace> App<'trace> {
             .block(
                 Block::bordered()
                     .title("Tree Widget")
-                    .title_bottom(format!("{:?}", self.state)),
+                    .title_bottom(format!("{:?}", self.tree_state)),
             )
-            .experimental_scrollbar(Some(
-                Scrollbar::new(ScrollbarOrientation::VerticalRight)
-                    .begin_symbol(None)
-                    .track_symbol(None)
-                    .end_symbol(None),
-            ))
+            .experimental_scrollbar(Some(Scrollbar::new(ScrollbarOrientation::VerticalRight)))
             .highlight_style(
                 Style::new()
                     .fg(Color::Black)
@@ -284,15 +284,112 @@ impl<'trace> App<'trace> {
 
         let layout = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints(vec![Constraint::Fill(1), Constraint::Max(40)])
+            .constraints(vec![Constraint::Fill(1), Constraint::Max(78)])
             .split(area);
 
-        let d = format!("{:?}", self.state.selected());
-
-        frame.render_stateful_widget(widget, layout[0], &mut self.state);
-        frame.render_widget(
-            Paragraph::new(d).block(Block::new().borders(Borders::ALL)),
+        frame.render_stateful_widget(widget, layout[0], &mut self.tree_state);
+        frame.render_stateful_widget(
+            HexView {
+                tree_trait: &self.tree_trait,
+                tree_state: &self.tree_state,
+            },
             layout[1],
+            &mut self.hex_state,
+        );
+    }
+}
+
+#[derive(Default)]
+struct HexState {
+    scroll_state: ScrollbarState,
+}
+
+struct HexView<'a> {
+    tree_trait: &'a TraceTree<'a>,
+    tree_state: &'a TreeState<Path>,
+}
+impl StatefulWidget for HexView<'_> {
+    type State = HexState;
+
+    fn render(self, area: Rect, buf: &mut ratatui::prelude::Buffer, state: &mut Self::State) {
+        let data = &self.tree_trait.trace.data;
+
+        let height = area.height as usize;
+        let (scroll, range) = if let Some(selected) = self.tree_state.selected() {
+            let selected = &self.tree_trait.nodes[selected];
+            let rows = data.len().div_ceil(16);
+            (
+                (rows * selected.start / data.len()).saturating_sub(height / 2),
+                Some(selected.start..selected.end),
+            )
+        } else {
+            (0, None)
+        };
+
+        let col = 16;
+        let total_rows = data.len().div_ceil(col);
+
+        state.scroll_state = state
+            .scroll_state
+            .content_length(total_rows)
+            .position(scroll);
+
+        let hex_view = data
+            .chunks(col)
+            .enumerate()
+            .skip(scroll)
+            .take(height)
+            .map(|(i, chunk)| {
+                let mut line = vec![];
+                line.push(Span::styled(
+                    format!("{:08X}: ", i * 16),
+                    Style::new().fg(Color::DarkGray),
+                ));
+
+                let mut ascii = vec![];
+
+                for (j, b) in chunk.iter().enumerate() {
+                    let (color, symbol) = if b.is_ascii_graphic() {
+                        (Color::Red, *b as char)
+                    } else if *b == 0 {
+                        (Color::DarkGray, '.')
+                    } else {
+                        (Color::White, '.')
+                    };
+                    let bg = range
+                        .as_ref()
+                        .is_some_and(|r| r.contains(&((i * col) + j)))
+                        .then_some(Color::Blue)
+                        .unwrap_or_default();
+                    line.push(Span::raw(format!("{:02X}", b)).fg(color).bg(bg));
+                    line.push(
+                        Span::raw(" ").bg(range
+                            .as_ref()
+                            .is_some_and(|r| {
+                                j < (col - 1)
+                                    && (r.start..r.end.saturating_sub(1)).contains(&((i * col) + j))
+                            })
+                            .then_some(Color::Blue)
+                            .unwrap_or_default()),
+                    );
+                    ascii.push(Span::raw(symbol.to_string()).fg(color).bg(bg));
+                }
+                line.push(Span::raw("   ".repeat(col - chunk.len())));
+
+                line.extend(ascii);
+
+                Line::from(line)
+            })
+            .collect::<Vec<_>>();
+
+        let paragraph = Paragraph::new(hex_view)
+            .block(Block::default().borders(Borders::ALL).title("Hex View"));
+
+        paragraph.render(area, buf);
+        Scrollbar::new(ScrollbarOrientation::VerticalRight).render(
+            area,
+            buf,
+            &mut state.scroll_state,
         );
     }
 }
@@ -354,31 +451,31 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> std::io::Res
                         return Ok(())
                     }
                     KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                        app.state.select_relative(|current| {
+                        app.tree_state.select_relative(|current| {
                             current.map_or(0, |current| current.saturating_add(20))
                         })
                     }
                     KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                        app.state.select_relative(|current| {
+                        app.tree_state.select_relative(|current| {
                             current.map_or(0, |current| current.saturating_sub(20))
                         })
                     }
 
-                    KeyCode::Char('g') => app.state.select_first(),
-                    KeyCode::Char('G') => app.state.select_last(),
+                    KeyCode::Char('g') => app.tree_state.select_first(),
+                    KeyCode::Char('G') => app.tree_state.select_last(),
 
-                    KeyCode::Char('j') => app.state.select_relative(|current| {
+                    KeyCode::Char('j') => app.tree_state.select_relative(|current| {
                         current.map_or(0, |current| current.saturating_add(1))
                     }),
-                    KeyCode::Char('k') => app.state.select_relative(|current| {
+                    KeyCode::Char('k') => app.tree_state.select_relative(|current| {
                         current.map_or(0, |current| current.saturating_sub(1))
                     }),
-                    KeyCode::Char('h') => app.state.key_left(),
+                    KeyCode::Char('h') => app.tree_state.key_left(),
                     KeyCode::Char('l') => {
                         //app.state.key_right()
 
                         // open node or move down if node already open or empty
-                        let state = &mut app.state;
+                        let state = &mut app.tree_state;
                         if let Some(selected) = state.selected() {
                             let has_children = !app
                                 .tree_trait
@@ -391,7 +488,7 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> std::io::Res
                             if has_children && state.open(selected.clone()) {
                                 true
                             } else {
-                                app.state.select_relative(|current| {
+                                app.tree_state.select_relative(|current| {
                                     current.map_or(0, |current| current.saturating_add(1))
                                 })
                             }
@@ -401,24 +498,24 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> std::io::Res
                     }
 
                     KeyCode::Char('q') => return Ok(()),
-                    KeyCode::Char('\n' | ' ') => app.state.toggle_selected(),
-                    KeyCode::Left => app.state.key_left(),
-                    KeyCode::Right => app.state.key_right(),
-                    KeyCode::Down => app.state.key_down(),
-                    KeyCode::Up => app.state.key_up(),
-                    KeyCode::Esc => app.state.select(Some(Path::new())),
-                    KeyCode::Home => app.state.select_first(),
-                    KeyCode::End => app.state.select_last(),
-                    KeyCode::PageDown => app.state.scroll_down(3),
-                    KeyCode::PageUp => app.state.scroll_up(3),
+                    KeyCode::Char('\n' | ' ') => app.tree_state.toggle_selected(),
+                    KeyCode::Left => app.tree_state.key_left(),
+                    KeyCode::Right => app.tree_state.key_right(),
+                    KeyCode::Down => app.tree_state.key_down(),
+                    KeyCode::Up => app.tree_state.key_up(),
+                    KeyCode::Esc => app.tree_state.select(Some(Path::new())),
+                    KeyCode::Home => app.tree_state.select_first(),
+                    KeyCode::End => app.tree_state.select_last(),
+                    KeyCode::PageDown => app.tree_state.scroll_down(3),
+                    KeyCode::PageUp => app.tree_state.scroll_up(3),
                     _ => false,
                 },
                 Event::Mouse(mouse) => match mouse.kind {
-                    MouseEventKind::ScrollDown => app.state.scroll_down(1),
-                    MouseEventKind::ScrollUp => app.state.scroll_up(1),
-                    MouseEventKind::Down(_button) => {
-                        app.state.click_at(Position::new(mouse.column, mouse.row))
-                    }
+                    MouseEventKind::ScrollDown => app.tree_state.scroll_down(1),
+                    MouseEventKind::ScrollUp => app.tree_state.scroll_up(1),
+                    MouseEventKind::Down(_button) => app
+                        .tree_state
+                        .click_at(Position::new(mouse.column, mouse.row)),
                     _ => false,
                 },
                 Event::Resize(_, _) => true,
