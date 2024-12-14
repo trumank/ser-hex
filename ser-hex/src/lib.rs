@@ -25,17 +25,6 @@ where
     CounterSubscriber::read(out_path.as_ref().to_owned(), reader, f)
 }
 
-pub fn read_from_stream<'t, 'r: 't, P: AsRef<Path>, R: Read + 'r, F, T>(
-    out_path: P,
-    reader: &'r mut R,
-    f: F,
-) -> T
-where
-    F: FnOnce(&mut TraceReader<&'r mut R>) -> T,
-{
-    read(out_path, reader, f)
-}
-
 pub struct TraceReader<R: Read> {
     reader: R,
     sub: CounterSubscriber,
