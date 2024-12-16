@@ -347,32 +347,77 @@ impl StatefulWidget for HexView<'_> {
                 ));
 
                 let mut ascii = vec![];
+                trait SpanExt {
+                    fn r(self, reverse: bool) -> Self;
+                }
+                impl SpanExt for Span<'_> {
+                    fn r(self, reverse: bool) -> Self {
+                        if reverse {
+                            self.reversed()
+                        } else {
+                            self
+                        }
+                    }
+                }
 
-                for (j, b) in chunk.iter().enumerate() {
-                    let (color, symbol) = if b.is_ascii_graphic() {
-                        (Color::Red, *b as char)
+                struct ByteStyle {
+                    byte_type: ByteType,
+                    symbol: char,
+                    highlight: bool,
+                }
+                #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+                enum ByteType {
+                    Null,
+                    Other,
+                    Ascii,
+                }
+                impl ByteType {
+                    fn color(self) -> Color {
+                        match self {
+                            ByteType::Null => Color::DarkGray,
+                            ByteType::Other => Color::White,
+                            ByteType::Ascii => Color::Red,
+                        }
+                    }
+                }
+
+                let style = |(j, b): (usize, &u8)| {
+                    let (byte_type, symbol) = if b.is_ascii_graphic() {
+                        (ByteType::Ascii, *b as char)
                     } else if *b == 0 {
-                        (Color::DarkGray, '.')
+                        (ByteType::Null, '.')
                     } else {
-                        (Color::White, '.')
+                        (ByteType::Other, '.')
                     };
-                    let bg = range
-                        .as_ref()
-                        .is_some_and(|r| r.contains(&((i * col) + j)))
-                        .then_some(Color::Blue)
-                        .unwrap_or_default();
-                    line.push(Span::raw(format!("{:02X}", b)).fg(color).bg(bg));
+                    ByteStyle {
+                        byte_type,
+                        symbol,
+                        highlight: range.as_ref().is_some_and(|r| r.contains(&((i * col) + j))),
+                    }
+                };
+
+                let mut iter = chunk.iter().enumerate().peekable();
+                while let Some(item) = iter.next() {
+                    let s = style(item);
+                    let (_j, b) = item;
                     line.push(
-                        Span::raw(" ").bg(range
-                            .as_ref()
-                            .is_some_and(|r| {
-                                j < (col - 1)
-                                    && (r.start..r.end.saturating_sub(1)).contains(&((i * col) + j))
-                            })
-                            .then_some(Color::Blue)
-                            .unwrap_or_default()),
+                        Span::raw(format!("{:02X}", b))
+                            .fg(s.byte_type.color())
+                            .r(s.highlight),
                     );
-                    ascii.push(Span::raw(symbol.to_string()).fg(color).bg(bg));
+                    if let Some(next) = iter.peek() {
+                        let next_s = style(*next);
+                        let highlight_space = s.highlight && next_s.highlight;
+                        let color = s.byte_type.min(next_s.byte_type).color();
+                        line.push(Span::raw(" ").fg(color).r(highlight_space));
+                    } else {
+                        line.push(Span::raw(" "));
+                    }
+                    ascii.push(
+                        Span::raw(s.symbol.to_string())
+                            .fg(s.byte_type.color())
+                            .r(s.highlight),
+                    );
                 }
                 line.push(Span::raw("   ".repeat(col - chunk.len())));
 
