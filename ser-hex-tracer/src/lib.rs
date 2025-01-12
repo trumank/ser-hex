@@ -178,6 +178,7 @@ impl Tracer {
         });
         Trace {
             data: &self.data,
+            start_index: 0,
             root: Action::Span(TreeSpan(ReadSpan {
                 name: "root".into(),
                 actions: root.into_iter().collect(),

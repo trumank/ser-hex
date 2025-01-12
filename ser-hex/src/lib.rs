@@ -26,9 +26,11 @@ where
     reader.seek(SeekFrom::Start(0)).unwrap();
     let mut data = vec![];
     reader.read_to_end(&mut data).unwrap();
+    let mut cursor = Cursor::new(data);
     reader.seek(SeekFrom::Start(pos)).unwrap();
+    cursor.seek(SeekFrom::Start(pos)).unwrap();
 
-    CounterSubscriber::read(out_path.as_ref().to_owned(), Some(data), reader, f)
+    CounterSubscriber::read(out_path.as_ref().to_owned(), Some(cursor), reader, f)
 }
 
 pub fn read_incremental<'t, 'r: 't, P: AsRef<Path>, R: Read + 'r, F, T>(
@@ -90,6 +92,7 @@ impl<S> ReadSpan<S> {
 
 struct CounterSubscriberInner {
     out_path: PathBuf,
+    start_index: usize,
     data: Cursor<Vec<u8>>,
     last_id: u64,
     root_span: Option<Id>,
@@ -98,10 +101,11 @@ struct CounterSubscriberInner {
     stack: Vec<Id>,
 }
 impl CounterSubscriberInner {
-    fn new(out_path: PathBuf, data: Vec<u8>) -> Self {
+    fn new(out_path: PathBuf, mut data: Cursor<Vec<u8>>) -> Self {
         Self {
             out_path,
-            data: Cursor::new(data),
+            start_index: data.stream_position().unwrap() as usize,
+            data,
             last_id: Default::default(),
             root_span: Default::default(),
             spans: Default::default(),
@@ -119,6 +123,7 @@ pub struct Trace<D: AsRef<[u8]> = Vec<u8>> {
         bound(deserialize = "D: From<Vec<u8>>")
     )]
     pub data: D,
+    pub start_index: usize,
     pub root: Action<TreeSpan>,
 }
 impl<D: AsRef<[u8]>> Trace<D> {
@@ -176,6 +181,7 @@ impl Drop for CounterSubscriberInner {
         let tree = TreeSpan::into_tree(self.root_span.as_ref().cloned().unwrap(), &mut self.spans);
         Trace {
             data: std::mem::take(&mut self.data).into_inner(),
+            start_index: self.start_index,
             root: Action::Span(tree),
         }
         .save(&self.out_path)
@@ -188,14 +194,14 @@ struct CounterSubscriber {
     inner: Arc<Mutex<CounterSubscriberInner>>,
 }
 impl CounterSubscriber {
-    fn new(out_path: PathBuf, data: Vec<u8>) -> Self {
+    fn new(out_path: PathBuf, data: Cursor<Vec<u8>>) -> Self {
         Self {
             inner: Arc::new(Mutex::new(CounterSubscriberInner::new(out_path, data))),
         }
     }
     fn read<'d, 't, 'r: 't, R: Read + 'r, P, F, T>(
         out_path: P,
-        data: Option<Vec<u8>>,
+        data: Option<Cursor<Vec<u8>>>,
         reader: &'r mut R,
         f: F,
     ) -> T
@@ -316,6 +322,8 @@ mod test {
         read_nested_stuff(reader)?;
         reader.seek(std::io::SeekFrom::Current(1))?;
         let _c = reader.read_u8()?;
+        reader.seek(std::io::SeekFrom::Current(-1))?;
+        let _c = reader.read_u8()?;
         Ok(())
     }
 
@@ -324,7 +332,7 @@ mod test {
         let mut reader = std::io::Cursor::new(vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
         reader.seek(SeekFrom::Start(2))?;
 
-        read_incremental("trace.json", &mut reader, read_stuff)?;
+        read("trace.json", &mut reader, read_stuff)?;
 
         Ok(())
     }

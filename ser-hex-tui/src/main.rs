@@ -105,7 +105,6 @@ impl<'trace> TraceTree<'trace> {
                     node
                 }
                 ser_hex::Action::Seek(s) => {
-                    *offset = *s;
                     let node: Rc<_> = TraceNode {
                         identifier: path.clone(),
                         start: *offset,
@@ -114,6 +113,7 @@ impl<'trace> TraceTree<'trace> {
                         children: vec![],
                     }
                     .into();
+                    *offset = *s;
                     nodes.insert(path.clone(), node.clone());
                     node
                 }
@@ -143,7 +143,8 @@ impl<'trace> TraceTree<'trace> {
 
         let mut nodes = Default::default();
 
-        let root = convert(&mut 0, &trace.root, &mut nodes, &mut Path::new());
+        let mut cur = trace.start_index;
+        let root = convert(&mut cur, &trace.root, &mut nodes, &mut Path::new());
 
         Self { trace, nodes, root }
     }
