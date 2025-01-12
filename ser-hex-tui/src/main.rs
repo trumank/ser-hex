@@ -284,7 +284,10 @@ impl<'trace> App<'trace> {
 
         let layout = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints(vec![Constraint::Fill(1), Constraint::Max(78)])
+            .constraints(vec![
+                Constraint::Fill(1),
+                Constraint::Max(self.hex_state.desired_width()),
+            ])
             .split(area);
 
         frame.render_stateful_widget(widget, layout[0], &mut self.tree_state);
@@ -299,9 +302,34 @@ impl<'trace> App<'trace> {
     }
 }
 
-#[derive(Default)]
 struct HexState {
     scroll_state: ScrollbarState,
+    columns: usize,
+}
+impl Default for HexState {
+    fn default() -> Self {
+        Self {
+            scroll_state: Default::default(),
+            columns: 16,
+        }
+    }
+}
+impl HexState {
+    fn dec_columns(&mut self) -> bool {
+        if self.columns > 1 {
+            self.columns -= 1;
+            true
+        } else {
+            false
+        }
+    }
+    fn inc_columns(&mut self) -> bool {
+        self.columns += 1;
+        true
+    }
+    fn desired_width(&self) -> u16 {
+        self.columns as u16 * 4 + 13
+    }
 }
 
 struct HexView<'a> {
@@ -313,11 +341,12 @@ impl StatefulWidget for HexView<'_> {
 
     fn render(self, area: Rect, buf: &mut ratatui::prelude::Buffer, state: &mut Self::State) {
         let data = &self.tree_trait.trace.data;
+        let columns = state.columns;
 
         let height = area.height as usize;
         let (scroll, range) = if let Some(selected) = self.tree_state.selected() {
             let selected = &self.tree_trait.nodes[selected];
-            let rows = data.len().div_ceil(16);
+            let rows = data.len().div_ceil(columns);
             (
                 (rows * selected.start / data.len()).saturating_sub(height / 2),
                 Some(selected.start..selected.end),
@@ -326,8 +355,7 @@ impl StatefulWidget for HexView<'_> {
             (0, None)
         };
 
-        let col = 16;
-        let total_rows = data.len().div_ceil(col);
+        let total_rows = data.len().div_ceil(columns);
 
         state.scroll_state = state
             .scroll_state
@@ -335,14 +363,14 @@ impl StatefulWidget for HexView<'_> {
             .position(scroll);
 
         let hex_view = data
-            .chunks(col)
+            .chunks(columns)
             .enumerate()
             .skip(scroll)
             .take(height)
             .map(|(i, chunk)| {
                 let mut line = vec![];
                 line.push(Span::styled(
-                    format!("{:08X}: ", i * 16),
+                    format!("{:08X}: ", i * columns),
                     Style::new().fg(Color::DarkGray),
                 ));
 
@@ -392,7 +420,9 @@ impl StatefulWidget for HexView<'_> {
                     ByteStyle {
                         byte_type,
                         symbol,
-                        highlight: range.as_ref().is_some_and(|r| r.contains(&((i * col) + j))),
+                        highlight: range
+                            .as_ref()
+                            .is_some_and(|r| r.contains(&((i * columns) + j))),
                     }
                 };
 
@@ -419,7 +449,7 @@ impl StatefulWidget for HexView<'_> {
                             .r(s.highlight),
                     );
                 }
-                line.push(Span::raw("   ".repeat(col - chunk.len())));
+                line.push(Span::raw("   ".repeat(columns - chunk.len())));
 
                 line.extend(ascii);
 
@@ -553,6 +583,8 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> std::io::Res
                     KeyCode::End => app.tree_state.select_last(),
                     KeyCode::PageDown => app.tree_state.scroll_down(3),
                     KeyCode::PageUp => app.tree_state.scroll_up(3),
+                    KeyCode::Char('-') => app.hex_state.dec_columns(),
+                    KeyCode::Char('=') => app.hex_state.inc_columns(),
                     _ => false,
                 },
                 Event::Mouse(mouse) => match mouse.kind {
