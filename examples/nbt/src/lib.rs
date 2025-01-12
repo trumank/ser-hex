@@ -12,7 +12,7 @@ mod test {
     #[test]
     fn test_nbt_tracing() -> Result<()> {
         let mut input = std::io::Cursor::new(include_bytes!("../level.nbt"));
-        let res = ser_hex::read_from_stream("trace_tracing.json", &mut input, read)?;
+        let res = ser_hex::read_incremental("trace_tracing.json", &mut input, read)?;
         println!("{res:#?}");
         Ok(())
     }

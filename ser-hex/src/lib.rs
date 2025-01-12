@@ -9,12 +9,12 @@ use tracing_core::span::Current;
 use std::{
     collections::HashMap,
     fs,
-    io::{Read, Seek},
+    io::{Cursor, Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
 
-pub fn read<'t, 'r: 't, P: AsRef<Path>, R: Read + 'r, F, T>(
+pub fn read<'t, 'r: 't, P: AsRef<Path>, R: Read + Seek + 'r, F, T>(
     out_path: P,
     reader: &'r mut R,
     f: F,
@@ -22,7 +22,24 @@ pub fn read<'t, 'r: 't, P: AsRef<Path>, R: Read + 'r, F, T>(
 where
     F: FnOnce(&mut TraceReader<&'r mut R>) -> T,
 {
-    CounterSubscriber::read(out_path.as_ref().to_owned(), reader, f)
+    let pos = reader.stream_position().unwrap();
+    reader.seek(SeekFrom::Start(0)).unwrap();
+    let mut data = vec![];
+    reader.read_to_end(&mut data).unwrap();
+    reader.seek(SeekFrom::Start(pos)).unwrap();
+
+    CounterSubscriber::read(out_path.as_ref().to_owned(), Some(data), reader, f)
+}
+
+pub fn read_incremental<'t, 'r: 't, P: AsRef<Path>, R: Read + 'r, F, T>(
+    out_path: P,
+    reader: &'r mut R,
+    f: F,
+) -> T
+where
+    F: FnOnce(&mut TraceReader<&'r mut R>) -> T,
+{
+    CounterSubscriber::read(out_path.as_ref().to_owned(), None, reader, f)
 }
 
 pub struct TraceReader<R: Read> {
@@ -73,7 +90,7 @@ impl<S> ReadSpan<S> {
 
 struct CounterSubscriberInner {
     out_path: PathBuf,
-    data: Vec<u8>,
+    data: Cursor<Vec<u8>>,
     last_id: u64,
     root_span: Option<Id>,
     spans: HashMap<Id, ReadSpan<Id>>,
@@ -81,10 +98,10 @@ struct CounterSubscriberInner {
     stack: Vec<Id>,
 }
 impl CounterSubscriberInner {
-    fn new(out_path: PathBuf) -> Self {
+    fn new(out_path: PathBuf, data: Vec<u8>) -> Self {
         Self {
             out_path,
-            data: Default::default(),
+            data: Cursor::new(data),
             last_id: Default::default(),
             root_span: Default::default(),
             spans: Default::default(),
@@ -158,7 +175,7 @@ impl Drop for CounterSubscriberInner {
     fn drop(&mut self) {
         let tree = TreeSpan::into_tree(self.root_span.as_ref().cloned().unwrap(), &mut self.spans);
         Trace {
-            data: std::mem::take(&mut self.data),
+            data: std::mem::take(&mut self.data).into_inner(),
             root: Action::Span(tree),
         }
         .save(&self.out_path)
@@ -171,12 +188,17 @@ struct CounterSubscriber {
     inner: Arc<Mutex<CounterSubscriberInner>>,
 }
 impl CounterSubscriber {
-    fn new(out_path: PathBuf) -> Self {
+    fn new(out_path: PathBuf, data: Vec<u8>) -> Self {
         Self {
-            inner: Arc::new(Mutex::new(CounterSubscriberInner::new(out_path))),
+            inner: Arc::new(Mutex::new(CounterSubscriberInner::new(out_path, data))),
         }
     }
-    fn read<'d, 't, 'r: 't, R: Read + 'r, P, F, T>(out_path: P, reader: &'r mut R, f: F) -> T
+    fn read<'d, 't, 'r: 't, R: Read + 'r, P, F, T>(
+        out_path: P,
+        data: Option<Vec<u8>>,
+        reader: &'r mut R,
+        f: F,
+    ) -> T
     where
         F: FnOnce(&mut TraceReader<&'r mut R>) -> T,
         P: Into<PathBuf>,
@@ -186,14 +208,14 @@ impl CounterSubscriber {
             f(t)
         }
 
-        let sub = Self::new(out_path.into());
+        let sub = Self::new(out_path.into(), data.unwrap_or_default());
         let mut reader = TraceReader::new(reader, sub.clone());
         tracing::subscriber::with_default(sub, || root(f, &mut reader))
     }
     fn read_action(&self, buf: &[u8], size: usize) {
         let mut lock = self.inner.lock().unwrap();
         let current = lock.stack.last().cloned().unwrap();
-        lock.data.extend(&buf[..size]);
+        lock.data.write_all(&buf[..size]).unwrap();
         lock.spans
             .get_mut(&current)
             .unwrap()
@@ -203,6 +225,7 @@ impl CounterSubscriber {
     fn seek_action(&self, to: u64) {
         let mut lock = self.inner.lock().unwrap();
         let current = lock.stack.last().cloned().unwrap();
+        lock.data.seek(SeekFrom::Start(to)).unwrap();
         lock.spans
             .get_mut(&current)
             .unwrap()
@@ -291,16 +314,17 @@ mod test {
     fn read_stuff<R: Read + Seek>(reader: &mut R) -> Result<(), Error> {
         let _a = reader.read_u8()?;
         read_nested_stuff(reader)?;
-        reader.seek(std::io::SeekFrom::Current(-1))?;
+        reader.seek(std::io::SeekFrom::Current(1))?;
         let _c = reader.read_u8()?;
         Ok(())
     }
 
     #[test]
     fn test_trace() -> Result<(), Error> {
-        let mut reader = std::io::Cursor::new(vec![1, 2, 3, 4, 5, 6]);
+        let mut reader = std::io::Cursor::new(vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+        reader.seek(SeekFrom::Start(2))?;
 
-        read_from_stream("trace.json", &mut reader, read_stuff)?;
+        read_incremental("trace.json", &mut reader, read_stuff)?;
 
         Ok(())
     }

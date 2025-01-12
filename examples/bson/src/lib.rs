@@ -12,7 +12,7 @@ mod test {
     #[test]
     fn test_bson() -> Result<()> {
         let mut input = std::io::Cursor::new(include_bytes!("../example.bson"));
-        let res = ser_hex::read_from_stream("trace.json", &mut input, read)?;
+        let res = ser_hex::read_incremental("trace.json", &mut input, read)?;
         println!("{res:#?}");
         Ok(())
     }
