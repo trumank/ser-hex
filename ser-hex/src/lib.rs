@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use tracing::{
-    span,
-    subscriber::{self, Subscriber},
+    span::{self, EnteredSpan},
+    subscriber::{self, DefaultGuard, Subscriber},
     Event, Id, Metadata,
 };
 use tracing_core::span::Current;
@@ -9,10 +9,22 @@ use tracing_core::span::Current;
 use std::{
     collections::HashMap,
     fs,
-    io::{Cursor, Read, Seek, SeekFrom, Write},
+    io::{self, Cursor, Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
+
+/// Build a stream (Cursor<Vec<u8>>) mirroring all the data in the underlying stream and cursor position
+fn build_mirror<S: Read + Seek>(stream: &mut S) -> Result<Cursor<Vec<u8>>, io::Error> {
+    let pos = stream.stream_position()?;
+    stream.seek(SeekFrom::Start(0))?;
+    let mut data = vec![];
+    stream.read_to_end(&mut data)?;
+    let mut cursor = Cursor::new(data);
+    stream.seek(SeekFrom::Start(pos))?;
+    cursor.seek(SeekFrom::Start(pos))?;
+    Ok(cursor)
+}
 
 pub fn read<'t, 'r: 't, P: AsRef<Path>, R: Read + Seek + 'r, F, T>(
     out_path: P,
@@ -20,16 +32,9 @@ pub fn read<'t, 'r: 't, P: AsRef<Path>, R: Read + Seek + 'r, F, T>(
     f: F,
 ) -> T
 where
-    F: FnOnce(&mut TraceReader<&'r mut R>) -> T,
+    F: FnOnce(&mut TraceStream<&'r mut R>) -> T,
 {
-    let pos = reader.stream_position().unwrap();
-    reader.seek(SeekFrom::Start(0)).unwrap();
-    let mut data = vec![];
-    reader.read_to_end(&mut data).unwrap();
-    let mut cursor = Cursor::new(data);
-    reader.seek(SeekFrom::Start(pos)).unwrap();
-    cursor.seek(SeekFrom::Start(pos)).unwrap();
-
+    let cursor = build_mirror(reader).unwrap();
     CounterSubscriber::read(out_path.as_ref().to_owned(), Some(cursor), reader, f)
 }
 
@@ -39,33 +44,63 @@ pub fn read_incremental<'t, 'r: 't, P: AsRef<Path>, R: Read + 'r, F, T>(
     f: F,
 ) -> T
 where
-    F: FnOnce(&mut TraceReader<&'r mut R>) -> T,
+    F: FnOnce(&mut TraceStream<&'r mut R>) -> T,
 {
     CounterSubscriber::read(out_path.as_ref().to_owned(), None, reader, f)
 }
 
-pub struct TraceReader<R: Read> {
-    reader: R,
-    sub: CounterSubscriber,
+pub struct TraceStream<S> {
+    stream: S,
+
+    // first drop span
+    #[allow(unused)]
+    scope_guard: EnteredSpan,
+
+    // then drop subscriber guard
+    #[allow(unused)]
+    guard: Option<DefaultGuard>,
+
+    // finally drop subscriber which writes trace
+    subscriber: CounterSubscriber,
 }
 
-impl<R: Read> TraceReader<R> {
-    fn new(reader: R, sub: CounterSubscriber) -> Self {
-        Self { reader, sub }
+impl<S: Read + Seek> TraceStream<S> {
+    pub fn new<P: Into<PathBuf>>(trace_path: P, mut inner_stream: S) -> Self {
+        let cursor = build_mirror(&mut inner_stream).unwrap();
+        let subscriber = CounterSubscriber::new(trace_path.into(), cursor);
+        let guard = Some(tracing::subscriber::set_default(subscriber.clone()));
+        Self::new_internal(inner_stream, subscriber, guard)
     }
 }
-impl<R: Read + Seek> Seek for TraceReader<R> {
+impl<S> TraceStream<S> {
+    pub fn new_incremental<P: Into<PathBuf>>(trace_path: P, inner_stream: S) -> Self {
+        let subscriber = CounterSubscriber::new(trace_path.into(), Cursor::new(vec![]));
+        let guard = Some(tracing::subscriber::set_default(subscriber.clone()));
+        Self::new_internal(inner_stream, subscriber, guard)
+    }
+}
+impl<S> TraceStream<S> {
+    fn new_internal(stream: S, subscriber: CounterSubscriber, guard: Option<DefaultGuard>) -> Self {
+        Self {
+            stream,
+            scope_guard: tracing::info_span!("root").entered(),
+            guard,
+            subscriber,
+        }
+    }
+}
+impl<R: Read + Seek> Seek for TraceStream<R> {
     fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
-        self.reader
+        self.stream
             .seek(pos)
-            .inspect(|&to| self.sub.seek_action(to))
+            .inspect(|&to| self.subscriber.seek_action(to))
     }
 }
-impl<R: Read> Read for TraceReader<R> {
+impl<R: Read> Read for TraceStream<R> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        self.reader
+        self.stream
             .read(buf)
-            .inspect(|&s| self.sub.read_action(buf, s))
+            .inspect(|&s| self.subscriber.read_action(buf, s))
     }
 }
 
@@ -206,17 +241,14 @@ impl CounterSubscriber {
         f: F,
     ) -> T
     where
-        F: FnOnce(&mut TraceReader<&'r mut R>) -> T,
+        F: FnOnce(&mut TraceStream<&'r mut R>) -> T,
         P: Into<PathBuf>,
     {
-        #[tracing::instrument(name = "root", skip_all)]
-        fn root<F: FnOnce(T) -> R, T, R>(f: F, t: T) -> R {
-            f(t)
-        }
-
         let sub = Self::new(out_path.into(), data.unwrap_or_default());
-        let mut reader = TraceReader::new(reader, sub.clone());
-        tracing::subscriber::with_default(sub, || root(f, &mut reader))
+        tracing::subscriber::with_default(sub.clone(), || {
+            // must build TraceStream after defualt subscriber is set because it enters root span
+            f(&mut TraceStream::new_internal(reader, sub, None))
+        })
     }
     fn read_action(&self, buf: &[u8], size: usize) {
         let mut lock = self.inner.lock().unwrap();
@@ -327,12 +359,48 @@ mod test {
         Ok(())
     }
 
-    #[test]
-    fn test_trace() -> Result<(), Error> {
-        let mut reader = std::io::Cursor::new(vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
-        reader.seek(SeekFrom::Start(2))?;
+    fn new_reader() -> Cursor<Vec<u8>> {
+        let mut reader = std::io::Cursor::new(vec![
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 16, 17, 18, 19, 20,
+        ]);
+        reader.seek(SeekFrom::Start(2)).unwrap();
+        reader
+    }
 
-        read("trace.json", &mut reader, read_stuff)?;
+    #[test]
+    fn test_trace_read() -> Result<(), Error> {
+        read("trace_read.json", &mut new_reader(), |s| {
+            read_stuff(s)?;
+            read_stuff(s)
+        })?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_trace_read_incremental() -> Result<(), Error> {
+        read_incremental("trace_read_incremental.json", &mut new_reader(), |s| {
+            read_stuff(s)?;
+            read_stuff(s)
+        })?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_trace_stream() -> Result<(), Error> {
+        let mut s = TraceStream::new("trace_stream.json", new_reader());
+        read_stuff(&mut s)?;
+        read_stuff(&mut s)?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_trace_stream_incremental() -> Result<(), Error> {
+        let mut s = TraceStream::new_incremental("trace_stream_incremental.json", new_reader());
+        read_stuff(&mut s)?;
+        read_stuff(&mut s)?;
 
         Ok(())
     }
