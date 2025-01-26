@@ -89,7 +89,7 @@ impl<S> TraceStream<S> {
         }
     }
 }
-impl<R: Read + Seek> Seek for TraceStream<R> {
+impl<R: Seek> Seek for TraceStream<R> {
     fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
         self.stream
             .seek(pos)
@@ -101,6 +101,17 @@ impl<R: Read> Read for TraceStream<R> {
         self.stream
             .read(buf)
             .inspect(|&s| self.subscriber.read_action(buf, s))
+    }
+}
+impl<R: Write> Write for TraceStream<R> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.stream
+            .write(buf)
+            .inspect(|&s| self.subscriber.read_action(buf, s))
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.stream.flush()
     }
 }
 
