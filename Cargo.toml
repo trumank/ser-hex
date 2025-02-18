@@ -7,6 +7,14 @@ members = [
     "ser-hex-tui",
     "examples/*",
 ]
+default-members = [
+    "ser-hex",
+    "ser-hex-tracer",
+    "ser-hex-viewer",
+    "ser-hex-tui",
+    "examples/bson",
+    "examples/nbt",
+]
 
 [workspace.package]
 repository = "https://github.com/trumank/ser-hex"
