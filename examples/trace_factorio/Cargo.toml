@@ -15,9 +15,9 @@ ser-hex-tracer = { version = "0.1.0", path = "../../ser-hex-tracer" }
 sha2 = "0.10.8"
 
 [target.'cfg(target_os = "linux")'.dependencies]
-libc = "0.2.161"
+libc = "0.2.169"
 memmap2 = "0.9.5"
-object = "0.36.5"
+object = "0.36.7"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 pdb = "0.8.0"

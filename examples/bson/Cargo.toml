@@ -9,4 +9,4 @@ edition.workspace = true
 [dependencies]
 byteorder = "1.5.0"
 ser-hex = { version = "0.1.0", path = "../../ser-hex" }
-tracing = "0.1.40"
+tracing = "0.1.41"

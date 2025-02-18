@@ -24,6 +24,6 @@ version = "0.1.0"
 edition = "2021"
 
 [workspace.dependencies]
-anyhow = "1.0.90"
-serde = "1.0.210"
-serde_json = { version = "1.0.130", features = ["unbounded_depth"] }
+anyhow = "1.0.95"
+serde = "1.0.217"
+serde_json = { version = "1.0.138", features = ["unbounded_depth"] }
