@@ -13,6 +13,7 @@ use ratatui::widgets::{Block, Scrollbar, ScrollbarOrientation};
 use ratatui::{crossterm, Frame, Terminal};
 use tui_tree_widget::{Tree, TreeState};
 use view::hex::{HexState, HexView};
+use view::minimap::Minimap;
 
 #[must_use]
 struct App<'trace> {
@@ -180,6 +181,7 @@ impl<'trace> App<'trace> {
             .constraints(vec![
                 Constraint::Fill(1),
                 Constraint::Max(self.hex_state.desired_width()),
+                Constraint::Length(10),
             ])
             .split(area);
 
@@ -191,6 +193,13 @@ impl<'trace> App<'trace> {
             },
             layout[1],
             &mut self.hex_state,
+        );
+        frame.render_widget(
+            Minimap {
+                tree_trait: &self.tree_trait,
+                tree_state: &self.tree_state,
+            },
+            layout[2],
         );
     }
 }

@@ -3,6 +3,7 @@ use std::ops::Range;
 use ratatui::style::Color;
 
 pub mod hex;
+pub mod minimap;
 pub mod tree;
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
