@@ -1,19 +1,18 @@
-use std::collections::{BTreeMap, HashSet};
+mod view;
+
+use std::collections::BTreeMap;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use itertools::Itertools;
 use ratatui::backend::{Backend, CrosstermBackend};
 use ratatui::crossterm::event::{Event, KeyCode, KeyModifiers, MouseEventKind};
 use ratatui::layout::{Constraint, Direction, Layout, Position, Rect};
-use ratatui::style::{Color, Modifier, Style, Stylize};
-use ratatui::text::{Line, Span};
-use ratatui::widgets::{
-    Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, StatefulWidget,
-    Widget,
-};
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::Span;
+use ratatui::widgets::{Block, Scrollbar, ScrollbarOrientation};
 use ratatui::{crossterm, Frame, Terminal};
-use tui_tree_widget::{Tree, TreeData, TreeState};
+use tui_tree_widget::{Tree, TreeState};
+use view::hex::{HexState, HexView};
 
 #[must_use]
 struct App<'trace> {
@@ -150,113 +149,6 @@ impl<'trace> TraceTree<'trace> {
     }
 }
 
-impl TreeData for TraceTree<'_> {
-    type Identifier = Path;
-
-    fn get_nodes(
-        &self,
-        open_identifiers: &HashSet<Self::Identifier>,
-    ) -> Vec<tui_tree_widget::Node<Self::Identifier>> {
-        fn collect_visible(
-            node: &TraceNode,
-            open: &HashSet<Path>,
-            nodes: &mut Vec<tui_tree_widget::Node<Path>>,
-            depth: usize,
-        ) {
-            nodes.push(tui_tree_widget::Node {
-                depth,
-                has_children: !node.children.is_empty(),
-                height: 1,
-                identifier: node.identifier.clone(),
-            });
-            if open.contains(&node.identifier) {
-                for child in &node.children {
-                    collect_visible(child, open, nodes, depth + 1);
-                }
-            }
-        }
-
-        let mut nodes = vec![];
-        collect_visible(&self.root, open_identifiers, &mut nodes, 0);
-
-        nodes
-    }
-
-    fn render(
-        &self,
-        identifier: &Self::Identifier,
-        area: ratatui::layout::Rect,
-        buffer: &mut ratatui::buffer::Buffer,
-    ) {
-        let node = self.nodes.get(identifier).unwrap();
-        let mut line = vec![];
-        match node.action {
-            ser_hex::Action::Read(_) => {
-                line.push(Span::styled(
-                    format!("Read ({}) ", node.end - node.start),
-                    Style::new().fg(Color::LightGreen),
-                ));
-
-                let data = &self.trace.data[node.start..node.end];
-                let d: String = data.iter().map(|b| format!("{b:02X}")).join(" ");
-
-                line.push(Span::styled(
-                    format!("[{d}] "),
-                    Style::new().fg(Color::LightYellow),
-                ));
-
-                match data.len() {
-                    4 => {
-                        line.push(Span::styled(
-                            format!("{} ", u32::from_le_bytes(data.try_into().unwrap())),
-                            Style::new().fg(Color::Magenta),
-                        ));
-                    }
-                    8 => {
-                        line.push(Span::styled(
-                            format!("{} ", u64::from_le_bytes(data.try_into().unwrap())),
-                            Style::new().fg(Color::Magenta),
-                        ));
-                        let mut buffer = dtoa::Buffer::new();
-                        let s = buffer.format(f64::from_le_bytes(data.try_into().unwrap()));
-                        line.push(Span::styled(
-                            format!("{s} "),
-                            Style::new().fg(Color::LightRed),
-                        ));
-                    }
-                    _ => {}
-                }
-                let max_non_null = data.split(|&b| b == 0).map(|s| s.len()).max().unwrap_or(0);
-                if data.is_ascii() && max_non_null >= 4 {
-                    line.push(Span::styled(
-                        format!("{:?} ", String::from_utf8_lossy(data)),
-                        Style::new().fg(Color::Red),
-                    ));
-                }
-                //write!(&mut preview, "{:?} ", String::from_utf8_lossy(data)).unwrap();
-            }
-            ser_hex::Action::Seek(_) => {
-                line.push(Span::styled(
-                    format!("Seek ({} -> {}) ", node.start, node.end),
-                    Style::new().fg(Color::Red),
-                ));
-            }
-            ser_hex::Action::Span(s) => {
-                line.push(Span::styled(
-                    format!("Span ({}) ", node.end - node.start),
-                    Style::new(),
-                ));
-                line.push(Span::styled(
-                    format!("{}", s.0.name),
-                    Style::new().italic().fg(Color::LightCyan),
-                ));
-            }
-        }
-
-        Widget::render(Line::from(line), area, buffer);
-    }
-}
-
 impl<'trace> App<'trace> {
     fn new(trace: &'trace ser_hex::Trace) -> Self {
         Self {
@@ -299,173 +191,6 @@ impl<'trace> App<'trace> {
             },
             layout[1],
             &mut self.hex_state,
-        );
-    }
-}
-
-struct HexState {
-    scroll_state: ScrollbarState,
-    columns: usize,
-}
-impl Default for HexState {
-    fn default() -> Self {
-        Self {
-            scroll_state: Default::default(),
-            columns: 16,
-        }
-    }
-}
-impl HexState {
-    fn dec_columns(&mut self) -> bool {
-        if self.columns > 1 {
-            self.columns -= 1;
-            true
-        } else {
-            false
-        }
-    }
-    fn inc_columns(&mut self) -> bool {
-        self.columns += 1;
-        true
-    }
-    fn desired_width(&self) -> u16 {
-        self.columns as u16 * 4 + 13
-    }
-}
-
-struct HexView<'a> {
-    tree_trait: &'a TraceTree<'a>,
-    tree_state: &'a TreeState<Path>,
-}
-impl StatefulWidget for HexView<'_> {
-    type State = HexState;
-
-    fn render(self, area: Rect, buf: &mut ratatui::prelude::Buffer, state: &mut Self::State) {
-        let data = &self.tree_trait.trace.data;
-        let columns = state.columns;
-
-        let height = area.height as usize;
-        let (scroll, range) = if let Some(selected) = self.tree_state.selected() {
-            let selected = &self.tree_trait.nodes[selected];
-            let rows = data.len().div_ceil(columns);
-            (
-                (rows * selected.start / data.len()).saturating_sub(height / 2),
-                Some(selected.start..selected.end),
-            )
-        } else {
-            (0, None)
-        };
-
-        let total_rows = data.len().div_ceil(columns);
-
-        state.scroll_state = state
-            .scroll_state
-            .content_length(total_rows)
-            .position(scroll);
-
-        let hex_view = data
-            .chunks(columns)
-            .enumerate()
-            .skip(scroll)
-            .take(height)
-            .map(|(i, chunk)| {
-                let mut line = vec![];
-                line.push(Span::styled(
-                    format!("{:08X}: ", i * columns),
-                    Style::new().fg(Color::DarkGray),
-                ));
-
-                let mut ascii = vec![];
-                trait SpanExt {
-                    fn r(self, reverse: bool) -> Self;
-                }
-                impl SpanExt for Span<'_> {
-                    fn r(self, reverse: bool) -> Self {
-                        if reverse {
-                            self.reversed()
-                        } else {
-                            self
-                        }
-                    }
-                }
-
-                struct ByteStyle {
-                    byte_type: ByteType,
-                    symbol: char,
-                    highlight: bool,
-                }
-                #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-                enum ByteType {
-                    Null,
-                    Other,
-                    Ascii,
-                }
-                impl ByteType {
-                    fn color(self) -> Color {
-                        match self {
-                            ByteType::Null => Color::DarkGray,
-                            ByteType::Other => Color::White,
-                            ByteType::Ascii => Color::Red,
-                        }
-                    }
-                }
-
-                let style = |(j, b): (usize, &u8)| {
-                    let (byte_type, symbol) = if b.is_ascii_graphic() {
-                        (ByteType::Ascii, *b as char)
-                    } else if *b == 0 {
-                        (ByteType::Null, '.')
-                    } else {
-                        (ByteType::Other, '.')
-                    };
-                    ByteStyle {
-                        byte_type,
-                        symbol,
-                        highlight: range
-                            .as_ref()
-                            .is_some_and(|r| r.contains(&((i * columns) + j))),
-                    }
-                };
-
-                let mut iter = chunk.iter().enumerate().peekable();
-                while let Some(item) = iter.next() {
-                    let s = style(item);
-                    let (_j, b) = item;
-                    line.push(
-                        Span::raw(format!("{:02X}", b))
-                            .fg(s.byte_type.color())
-                            .r(s.highlight),
-                    );
-                    if let Some(next) = iter.peek() {
-                        let next_s = style(*next);
-                        let highlight_space = s.highlight && next_s.highlight;
-                        let color = s.byte_type.min(next_s.byte_type).color();
-                        line.push(Span::raw(" ").fg(color).r(highlight_space));
-                    } else {
-                        line.push(Span::raw(" "));
-                    }
-                    ascii.push(
-                        Span::raw(s.symbol.to_string())
-                            .fg(s.byte_type.color())
-                            .r(s.highlight),
-                    );
-                }
-                line.push(Span::raw("   ".repeat(columns - chunk.len())));
-
-                line.extend(ascii);
-
-                Line::from(line)
-            })
-            .collect::<Vec<_>>();
-
-        let paragraph = Paragraph::new(hex_view)
-            .block(Block::default().borders(Borders::ALL).title("Hex View"));
-
-        paragraph.render(area, buf);
-        Scrollbar::new(ScrollbarOrientation::VerticalRight).render(
-            area,
-            buf,
-            &mut state.scroll_state,
         );
     }
 }
