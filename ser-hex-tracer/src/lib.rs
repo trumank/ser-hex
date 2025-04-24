@@ -141,7 +141,7 @@ impl Tracer {
                 let start_addr = start.symbol_address();
                 for op in &self.ops {
                     let c = op.stack.get(skip_start);
-                    if c.is_none() || c.unwrap().symbol_address() != start_addr {
+                    if c.is_none() || !std::ptr::eq(c.unwrap().symbol_address(), start_addr) {
                         break 'find_start;
                     }
                 }
@@ -160,7 +160,7 @@ impl Tracer {
                 for op in &self.ops {
                     let s = &op.stack[skip_start..];
                     let c = s.len().checked_sub(skip_end + 1).and_then(|i| s.get(i));
-                    if c.is_none() || c.unwrap().symbol_address() != start_addr {
+                    if c.is_none() || !std::ptr::eq(c.unwrap().symbol_address(), start_addr) {
                         break 'find_end;
                     }
                 }
