@@ -58,7 +58,15 @@ impl TreeData for TraceTree<'_> {
                 ));
 
                 let data = &self.trace.data[node.start..node.end];
-                let d: String = data.iter().map(|b| format!("{b:02X}")).join(" ");
+                let limit = 100;
+                let mut d: String = data
+                    .iter()
+                    .take(limit)
+                    .map(|b| format!("{b:02X}"))
+                    .join(" ");
+                if data.len() > limit {
+                    d.push_str("...");
+                }
 
                 line.push(Span::styled(
                     format!("[{d}] "),
