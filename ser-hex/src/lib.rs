@@ -1,3 +1,43 @@
+//! Serialization tracing library for visualizing where bytes came from.
+//!
+//! This crate provides tools to trace serialization operations and record which
+//! bytes were read/written during deserialization, helping answer "where did these
+//! bytes come from?" when examining binary data.
+//!
+//! # Usage
+//!
+//! There are two main approaches:
+//!
+//! ## Tracing with `tracing` instrumentation
+//!
+//! Use [`read`] or [`read_incremental`] with `tracing::instrument` annotations:
+//!
+//! ```no_run
+//! use std::io::{Cursor, Read};
+//!
+//! let mut input = Cursor::new([1, 2, 3]);
+//! ser_hex::read_incremental("trace.json", &mut input, read).unwrap();
+//!
+//! #[tracing::instrument(skip_all)]
+//! fn read<R: Read>(input: &mut R) -> std::io::Result<()> {
+//!     input.read_exact(&mut [0; 3])?;
+//!     Ok(())
+//! }
+//! ```
+//!
+//! ## Using [`TraceStream`] directly
+//!
+//! Wrap any `Read + Seek` stream with [`TraceStream`]:
+//!
+//! ```no_run
+//! use std::io::{Cursor, Read};
+//! use ser_hex::TraceStream;
+//!
+//! let input = Cursor::new([1, 2, 3]);
+//! let mut tracer = TraceStream::new("trace.json", input);
+//! // ... perform reads on tracer ...
+//! ```
+
 use serde::{Deserialize, Serialize};
 use tracing::{
     Event, Id, Metadata,

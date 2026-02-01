@@ -1,5 +1,8 @@
 [package]
 name = "ser-hex"
+description = "Serialization tracing library for visualizing where bytes came from"
+keywords = ["serialization", "tracing", "hex", "binary", "debugging"]
+categories = ["development-tools::debugging", "encoding"]
 repository.workspace = true
 authors.workspace = true
 license.workspace = true

@@ -27,3 +27,6 @@ edition = "2024"
 anyhow = "1.0.95"
 serde = "1.0.217"
 serde_json = { version = "1.0.138", features = ["unbounded_depth"] }
+
+[workspace.metadata.release]
+tag-prefix = ""

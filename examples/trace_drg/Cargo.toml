@@ -1,5 +1,6 @@
 [package]
 name = "trace_drg"
+publish = false
 repository.workspace = true
 authors.workspace = true
 license.workspace = true
