@@ -3,11 +3,11 @@
 use std::cell::RefCell;
 use std::cell::UnsafeCell;
 
+use patternsleuth::resolvers::Context as _;
 use patternsleuth::resolvers::futures::future::join_all;
 use patternsleuth::resolvers::impl_resolver_singleton;
 use patternsleuth::resolvers::impl_try_collector;
 use patternsleuth::resolvers::unreal::save_game::UGameplayStaticsLoadGameFromSlot;
-use patternsleuth::resolvers::Context as _;
 use patternsleuth::scanner::Pattern;
 use ser_hex_tracer::Tracer;
 
@@ -23,8 +23,9 @@ impl_try_collector! {
 pub struct Serialize(pub usize);
 impl_resolver_singleton!(collect, Serialize);
 impl_resolver_singleton!(PEImage, Serialize, |ctx| async {
-    let patterns =
-        ["4D 85 C0 74 ?? 48 89 5C 24 ?? 48 89 6C 24 ?? 57 48 83 EC 20 F6 41 ?? 01 49 8B F8 48 8B EA 48 8B D9 75 ?? 48 8B 01 48 89 74 24 ?? 48 8B B1 ?? ?? ?? ?? FF 50 ?? 48 8D 0C 3E 48 3B C8 7F"];
+    let patterns = [
+        "4D 85 C0 74 ?? 48 89 5C 24 ?? 48 89 6C 24 ?? 57 48 83 EC 20 F6 41 ?? 01 49 8B F8 48 8B EA 48 8B D9 75 ?? 48 8B 01 48 89 74 24 ?? 48 8B B1 ?? ?? ?? ?? FF 50 ?? 48 8D 0C 3E 48 3B C8 7F",
+    ];
 
     let res = join_all(patterns.iter().map(|p| ctx.scan(Pattern::new(p).unwrap()))).await;
 

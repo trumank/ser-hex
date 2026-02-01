@@ -9,7 +9,7 @@ use ratatui::{
 };
 use tui_tree_widget::TreeState;
 
-use crate::{view::byte_style, Path, TraceTree};
+use crate::{Path, TraceTree, view::byte_style};
 
 pub struct HexState {
     scroll_state: ScrollbarState,
@@ -89,11 +89,7 @@ impl StatefulWidget for HexView<'_> {
                 }
                 impl SpanExt for Span<'_> {
                     fn r(self, reverse: bool) -> Self {
-                        if reverse {
-                            self.reversed()
-                        } else {
-                            self
-                        }
+                        if reverse { self.reversed() } else { self }
                     }
                 }
 

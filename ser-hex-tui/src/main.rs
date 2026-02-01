@@ -10,7 +10,7 @@ use ratatui::layout::{Constraint, Direction, Layout, Position, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Span;
 use ratatui::widgets::{Block, Scrollbar, ScrollbarOrientation};
-use ratatui::{crossterm, Frame, Terminal};
+use ratatui::{Frame, Terminal, crossterm};
 use tui_tree_widget::{Tree, TreeState};
 use view::hex::{HexState, HexView};
 use view::minimap::Minimap;
@@ -258,7 +258,7 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> std::io::Res
             let update = match crossterm::event::read()? {
                 Event::Key(key) => match key.code {
                     KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                        return Ok(())
+                        return Ok(());
                     }
                     KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                         app.tree_state.select_relative(|current| {

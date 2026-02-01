@@ -1,6 +1,6 @@
 use std::{collections::HashMap, io::Read};
 
-use byteorder::{ReadBytesExt, BE};
+use byteorder::{BE, ReadBytesExt};
 use tracing::instrument;
 
 type Result<R> = std::result::Result<R, Box<dyn std::error::Error>>;

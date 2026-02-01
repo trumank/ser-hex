@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 use tracing::{
+    Event, Id, Metadata,
     span::{self, EnteredSpan},
     subscriber::{self, DefaultGuard, Subscriber},
-    Event, Id, Metadata,
 };
 use tracing_core::span::Current;
 
@@ -348,7 +348,7 @@ impl Subscriber for CounterSubscriber {
 mod test {
     use std::io::Error;
 
-    use byteorder::{ReadBytesExt, LE};
+    use byteorder::{LE, ReadBytesExt};
     use tracing::instrument;
 
     use super::*;

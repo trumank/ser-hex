@@ -1,4 +1,4 @@
-use libc::{c_char, c_int, c_void, dl_iterate_phdr, Elf64_Phdr, PT_LOAD};
+use libc::{Elf64_Phdr, PT_LOAD, c_char, c_int, c_void, dl_iterate_phdr};
 use object::read::elf::ProgramHeader;
 use object::{Object, ObjectSymbol};
 use std::{

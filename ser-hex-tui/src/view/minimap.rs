@@ -5,15 +5,15 @@ use ratatui::{
     layout::Rect,
     style::Color,
     widgets::{
-        canvas::{Canvas, Points},
         Block, Widget,
+        canvas::{Canvas, Points},
     },
 };
 use tui_tree_widget::TreeState;
 
 use crate::{Path, TraceTree};
 
-use super::{byte_style, ByteType};
+use super::{ByteType, byte_style};
 
 pub struct Minimap<'a> {
     pub tree_trait: &'a TraceTree<'a>,

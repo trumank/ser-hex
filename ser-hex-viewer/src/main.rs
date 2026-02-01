@@ -6,11 +6,11 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use anyhow::{bail, Context as _, Result};
+use anyhow::{Context as _, Result, bail};
 use eframe::{
+    Frame, NativeOptions,
     egui::{self},
     epaint::Hsva,
-    Frame, NativeOptions,
 };
 use egui::Context;
 use fs_err as fs;
@@ -462,8 +462,8 @@ impl eframe::App for App {
                 .mem_editor
                 .frame_data
                 .selected_highlight_address;
-            if prev_selection != new_selection {
-                if let Some(selection) = new_selection {
+            if prev_selection != new_selection
+                && let Some(selection) = new_selection {
                     // TODO find "narrowest" span in case of multiple
                     if let Some(span) = interval_tree.query(selection..selection + 1).next() {
                         let mut path_select = vec![0];
@@ -471,7 +471,6 @@ impl eframe::App for App {
                         self.path_select = Some(path_select);
                     }
                 }
-            }
         });
     }
 }
